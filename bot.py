@@ -1,21 +1,42 @@
+import emoji
+import asyncio
+import copy
+import json
+import logging
+import os
+import threading
+import time
+from datetime import datetime, timedelta
+
+import pytz  # Додати для роботи з часовими поясами
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-from datetime import datetime, timedelta
-import logging
-import json
-import os
-import pytz  # Додати для роботи з часовими поясами
+from telegram.error import BadRequest
+
 from config import TELEGRAM_TOKEN  # Імпорт токену з конфігураційного файлу
-import asyncio
-import time
-import threading
-import copy
 
 
 def keep_alive():
     while True:
         print("Bot is still running...")
         time.sleep(1800)  # 1800 секунд = 30 хвилин
+
+
+# Функція для видалення емодзі
+def remove_emoji(text):
+    return emoji.replace_emoji(text, replace='')
+
+
+# Функція для обрізання імені на першому пробілі
+def format_name(name):
+    # Видаляємо емодзі
+    clean_name = remove_emoji(name)
+
+    # Обрізаємо на першому пробілі, якщо він є
+    if ' ' in clean_name:
+        clean_name = clean_name.split(' ')[0]
+
+    return clean_name
 
 
 # Налаштування логування
@@ -124,14 +145,18 @@ async def get_schedule_text(schedule, date_label, context):
     text = f"Графік роботи Адміністраторів на {date_label}\n\n"
 
     for time_slot, user_ids in schedule.items():
-        # Створити список корутін для отримання юзернеймів
-        chat_coroutines = [context.bot.get_chat(user_id) for user_id in user_ids]
+        admins = []
+        for user_id in user_ids:
+            try:
+                chat = await context.bot.get_chat(user_id)
+                if chat.first_name:
+                    admins.append(format_name(chat.first_name))
+                else:
+                    admins.append("–")
+            except BadRequest:
+                admins.append("unknown")
 
-        # Очікувати всі корутіни
-        chats = await asyncio.gather(*chat_coroutines)
-
-        admins = [chat.first_name for chat in chats if chat.id in user_ids]  # Отримуємо імена користувачів за ID
-        admins_str = ', '.join(admins) if admins else "–"
+        admins_str = ' – '.join(admins) if admins else "–"
         text += f"{time_slot} – {admins_str}\n"
 
     return text
@@ -335,7 +360,7 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         user_names_results = await asyncio.gather(*user_name_tasks)
 
         # Отримуємо імена користувачів
-        user_names = ' – '.join([member.user.first_name for member in user_names_results]) or "–"
+        user_names = ' – '.join([format_name(member.user.first_name) for member in user_names_results]) or "–"
         updated_schedule_message += f"{time_slot}: {user_names}\n"
 
     # Редагуємо старе повідомлення
