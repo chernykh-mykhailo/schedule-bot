@@ -27,16 +27,24 @@ def remove_emoji(text):
     return emoji.replace_emoji(text, replace='')
 
 
-# Функція для обрізання імені на першому пробілі
 def format_name(name):
-    # Видаляємо емодзі
+    # Зберігаємо перший емодзі
+    first_emoji = ''
+    for c in name:
+        if emoji.is_emoji(c):
+            first_emoji = c  # Зберігаємо перший емодзі
+            break  # Зупиняємося, як тільки знайшли перший емодзі
+
+    # Видаляємо всі емодзі з імені
     clean_name = remove_emoji(name)
 
     # Обрізаємо на першому пробілі, якщо він є
     if ' ' in clean_name:
         clean_name = clean_name.split(' ')[0]
 
-    return clean_name
+    # Повертаємо ім'я з першим емодзі
+    return f"{first_emoji}{clean_name}".strip() if first_emoji else clean_name.strip()
+
 
 
 # Налаштування логування
