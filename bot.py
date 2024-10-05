@@ -1,4 +1,5 @@
 import emoji
+import re
 import asyncio
 import copy
 import json
@@ -36,14 +37,32 @@ def format_name(name):
             break  # Зупиняємося, як тільки знайшли перший емодзі
 
     # Видаляємо всі емодзі з імені
-    clean_name = remove_emoji(name)
+    clean_name = remove_emoji(name).strip()
 
-    # Обрізаємо на першому пробілі, якщо він є
-    if ' ' in clean_name:
-        clean_name = clean_name.split(' ')[0]
+    # Перевіряємо наявність дужок
+    if '(' in clean_name:
+        # Обрізаємо до закритої дужки
+        match = re.search(r'[^()]*\)', clean_name)
+        if match:
+            clean_name = clean_name[:match.end()].strip()  # Обрізаємо до закритої дужки
+    else:
+        # Обрізаємо на першому пробілі, якщо дужок немає
+        match = re.search(r'([^ ]+)', clean_name)
+        if match:
+            clean_name = match.group(1).strip()  # Обрізаємо на першому пробілі
 
-    # Повертаємо ім'я з першим емодзі
+    # Повертаємо ім'я з першим емодзі без пробілів
     return f"{first_emoji}{clean_name}".strip() if first_emoji else clean_name.strip()
+# Приклад використання
+example_name_1 = "🌙Мишко яке найдовше ім'я можна собі придумати, га? Трішки більше"
+example_name_2 = "Аарон(а хулі нє)?"
+
+formatted_name_1 = format_name(example_name_1)
+formatted_name_2 = format_name(example_name_2)
+
+print(formatted_name_1)  # Виведе: "🌙Мишко"
+print(formatted_name_2)  # Виведе: "Аарон(а хулі нє)?"
+
 
 
 
