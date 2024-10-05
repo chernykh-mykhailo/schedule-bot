@@ -1,3 +1,11 @@
+#token:
+config.py
+
+#shedules 
+today_schedule.json
+tomorrow_schedule.json
+default_schedule.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
