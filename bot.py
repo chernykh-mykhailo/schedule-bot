@@ -397,7 +397,7 @@ def main() -> None:
     app.add_handler(CommandHandler("today", show_today_schedule))
     app.add_handler(CommandHandler("tomorrow", show_tomorrow_schedule))
     app.add_handler(CommandHandler("default", show_default_schedule))
-    app.add_handler(CommandHandler("update", mechanical_update_schedules))
+    #app.add_handler(CommandHandler("update", mechanical_update_schedules))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, edit_schedule))
 
     # Створення планувальника
