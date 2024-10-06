@@ -53,18 +53,6 @@ def format_name(name):
 
     # Повертаємо ім'я з першим емодзі без пробілів
     return f"{first_emoji}{clean_name}".strip() if first_emoji else clean_name.strip()
-# Приклад використання
-example_name_1 = "🌙Мишко яке найдовше ім'я можна собі придумати, га? Трішки більше"
-example_name_2 = "Аарон(а хулі нє)?"
-
-formatted_name_1 = format_name(example_name_1)
-formatted_name_2 = format_name(example_name_2)
-
-print(formatted_name_1)  # Виведе: "🌙Мишко"
-print(formatted_name_2)  # Виведе: "Аарон(а хулі нє)?"
-
-
-
 
 # Налаштування логування
 logging.basicConfig(
