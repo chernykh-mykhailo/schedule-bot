@@ -5,6 +5,8 @@ config.py
 today_schedule.json
 tomorrow_schedule.json
 default_schedule.json
+weekday_default_schedule.json
+weekend_default_schedule.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

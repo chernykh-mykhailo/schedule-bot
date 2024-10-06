@@ -15,7 +15,6 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from telegram.error import BadRequest
 from apscheduler.schedulers.background import BackgroundScheduler
 
-
 from config import TELEGRAM_TOKEN  # Імпорт токену з конфігураційного файлу
 
 
@@ -69,7 +68,8 @@ logger = logging.getLogger(__name__)
 TODAY_SCHEDULE_FILE = "today_schedule.json"
 TOMORROW_SCHEDULE_FILE = "tomorrow_schedule.json"
 DEFAULT_SCHEDULE_FILE = "default_schedule.json"
-
+WEEKDAY_DEFAULT_SCHEDULE_FILE = "weekday_default_schedule.json"
+WEEKEND_DEFAULT_SCHEDULE_FILE = "weekend_default_schedule.json"
 
 # Завантажити графік з файлів або ініціалізувати їх
 def load_schedule(file_name, default_schedule=None):
@@ -85,43 +85,73 @@ def save_schedule(file_name, schedule):
         json.dump(schedule, f, ensure_ascii=False, indent=4)
 
 
-# Ініціалізація стандартного графіку
+# Ініціалізація стандартного пустого графіку
 empty_schedule = {
-    "09:00 - 10:00": [],
-    "10:00 - 11:00": [],
-    "11:00 - 12:00": [],
-    "12:00 - 13:00": [],
-    "13:00 - 14:00": [],
-    "14:00 - 15:00": [],
-    "15:00 - 16:00": [],
-    "16:00 - 17:00": [],
-    "17:00 - 18:00": [],
-    "18:00 - 19:00": [],
-    "19:00 - 20:00": [],
-    "20:00 - 21:00": [],
-    "21:00 - 22:00": [],
-    "22:00 - 23:00": [],
-    "23:00 - 00:00": [],
-    "00:00 - 01:00": [],
+    "weekday": {  # Графік для буднього дня
+        "15:00 - 16:00": [],
+        "16:00 - 17:00": [],
+        "17:00 - 18:00": [],
+        "18:00 - 19:00": [],
+        "19:00 - 20:00": [],
+        "20:00 - 21:00": [],
+        "21:00 - 22:00": [],
+        "22:00 - 23:00": [],
+        "23:00 - 00:00": [],
+        "00:00 - 01:00": []
+    },  # Графік для субботи/неділі
+    "weekend": {
+        "09:00 - 10:00": [],
+        "10:00 - 11:00": [],
+        "11:00 - 12:00": [],
+        "12:00 - 13:00": [],
+        "13:00 - 14:00": [],
+        "14:00 - 15:00": [],
+        "15:00 - 16:00": [],
+        "16:00 - 17:00": [],
+        "17:00 - 18:00": [],
+        "18:00 - 19:00": [],
+        "19:00 - 20:00": [],
+        "20:00 - 21:00": [],
+        "21:00 - 22:00": [],
+        "22:00 - 23:00": [],
+        "23:00 - 00:00": [],
+        "00:00 - 01:00": [],
+    }  # Графік для вихідних днів
 }
 
 # Завантажити графіки на сьогодні і завтра
 today_schedule = copy.deepcopy(load_schedule(TODAY_SCHEDULE_FILE, empty_schedule))
 tomorrow_schedule = copy.deepcopy(load_schedule(TOMORROW_SCHEDULE_FILE, empty_schedule))
-default_schedule = copy.deepcopy(load_schedule(DEFAULT_SCHEDULE_FILE, empty_schedule))
+# Завантажуємо дефолтний графік з правильною структурою
+default_schedule = copy.deepcopy(load_schedule(DEFAULT_SCHEDULE_FILE, {"weekday": {}, "weekend": {}}))
+# Оновлення завантаження графіків
+weekday_default_schedule = copy.deepcopy(load_schedule(WEEKDAY_DEFAULT_SCHEDULE_FILE, empty_schedule))
+weekend_default_schedule = copy.deepcopy(load_schedule(WEEKEND_DEFAULT_SCHEDULE_FILE, empty_schedule))
+
+
+def is_weekend(date):
+    # Вихідними днями є субота (5) і неділя (6)
+    return date.weekday() in (5, 6)
 
 
 # Функція для оновлення графіків на новий день
-def update_schedules():
-    global today_schedule, tomorrow_schedule
-    # Графік на сьогодні стає графіком на завтра
-    today_schedule = copy.deepcopy(tomorrow_schedule)
-    # Новий графік на завтра - це стандартний графік
-    tomorrow_schedule = copy.deepcopy(default_schedule)
+async def update_schedules():
+    kyiv_tz = pytz.timezone('Europe/Kiev')
+    today_date = datetime.now(kyiv_tz)
+    tomorrow_date = today_date + timedelta(days=1)
 
-    # Зберегти оновлені графіки
-    save_schedule(TODAY_SCHEDULE_FILE, today_schedule)
-    save_schedule(TOMORROW_SCHEDULE_FILE, tomorrow_schedule)
+    if is_weekend(tomorrow_date):
+        default_for_tomorrow = default_schedule['weekend']  # Вихідний графік
+    else:
+        default_for_tomorrow = default_schedule['weekday']  # Будній графік
+
+    # Оновлюємо завтрашній графік на дефолтний (відповідно до типу дня)
+    tomorrow_schedule.clear()
+    tomorrow_schedule.update(copy.deepcopy(default_for_tomorrow))
+
+    # Збереження змін у файлі
+    with open(TOMORROW_SCHEDULE_FILE, 'w', encoding='utf-8') as f:
+        json.dump(tomorrow_schedule, f, ensure_ascii=False, indent=4)
 
 
 def process_hours(input_range):
@@ -210,7 +240,11 @@ async def show_tomorrow_schedule(update: Update, context: ContextTypes.DEFAULT_T
 
 # Функція для показу стандартного графіку
 async def show_default_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = await get_schedule_text(default_schedule, "стандартний графік", context)
+    current_day = datetime.now(pytz.timezone('Europe/Kiev')).weekday()  # 0 - понеділок, 6 - неділя
+    if current_day < 5:  # Якщо будній день (понеділок - п’ятниця)
+        text = await get_schedule_text(weekday_default_schedule, "стандартний графік (будній день)", context)
+    else:  # Вихідний день (субота, неділя)
+        text = await get_schedule_text(weekend_default_schedule, "стандартний графік (вихідний день)", context)
     await update.message.reply_text(text)
 
 
@@ -224,7 +258,6 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name or update.effective_user.username
-    message = update.message.text.strip()
 
     # Витягуємо графік
     if update.message.reply_to_message:
@@ -232,7 +265,11 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
         # Перевірка стандартного графіка
         if "Графік роботи Адміністраторів на стандартний графік" in reply_text:
-            schedule = default_schedule  # Якщо це стандартний графік
+            current_day = datetime.now(pytz.timezone('Europe/Kiev')).weekday()
+            if current_day < 5:  # Будній день
+                schedule = weekday_default_schedule
+            else:  # Вихідний день
+                schedule = weekend_default_schedule
         elif "Графік роботи Адміністраторів на " in reply_text:
             schedule_date = update.message.reply_to_message.text.split('на ')[1].strip().split()[0]
             current_date = datetime.now(pytz.timezone('Europe/Kiev')).strftime("%d.%m.%Y")
@@ -244,13 +281,10 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             elif schedule_date == tomorrow_date:
                 schedule = tomorrow_schedule  # Зміна лише завтрашнього графіка
             else:
-                #                await update.message.reply_text("Це не графік. Спробуйте ще раз.")
                 return
         else:
-            #            await update.message.reply_text("Ви повинні відповісти на повідомлення про графік.")
             return
     else:
-        #        await update.message.reply_text("Ви повинні відповісти на повідомлення про графік.")
         return
 
     # Витягуємо дії з команди
@@ -340,8 +374,12 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         save_schedule(TODAY_SCHEDULE_FILE, today_schedule)
     elif schedule is tomorrow_schedule:
         save_schedule(TOMORROW_SCHEDULE_FILE, tomorrow_schedule)
-    elif schedule is default_schedule:
-        save_schedule(DEFAULT_SCHEDULE_FILE, default_schedule)
+    elif schedule is weekday_default_schedule:
+        # Додаємо текст для буднього дня
+        save_schedule(WEEKDAY_DEFAULT_SCHEDULE_FILE, weekday_default_schedule)
+    elif schedule is weekend_default_schedule:
+        # Додаємо текст для вихідного дня
+        save_schedule(WEEKEND_DEFAULT_SCHEDULE_FILE, weekend_default_schedule)
 
     # Формування повідомлення
     if operation == 'add':
@@ -364,8 +402,12 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         date_label = datetime.now(pytz.timezone('Europe/Kiev')).strftime("%d.%m.%Y")
     elif schedule is tomorrow_schedule:
         date_label = (datetime.now(pytz.timezone('Europe/Kiev')) + timedelta(days=1)).strftime("%d.%m.%Y")
+    elif schedule is weekday_default_schedule:
+        date_label = "стандартний графік (будній день)"
+    elif schedule is weekend_default_schedule:
+        date_label = "стандартний графік (вихідний день)"
     else:
-        date_label = "стандартний графік"
+        date_label = "незнайомий графік"  # Залишаємо цей варіант на випадок, якщо графік не знайдено
 
     updated_schedule_message = f"Графік роботи Адміністраторів на {date_label}\n\n"
     for time_slot in schedule:
@@ -397,7 +439,7 @@ def main() -> None:
     app.add_handler(CommandHandler("today", show_today_schedule))
     app.add_handler(CommandHandler("tomorrow", show_tomorrow_schedule))
     app.add_handler(CommandHandler("default", show_default_schedule))
-    #app.add_handler(CommandHandler("update", mechanical_update_schedules))
+    app.add_handler(CommandHandler("update", mechanical_update_schedules))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, edit_schedule))
 
     # Створення планувальника
