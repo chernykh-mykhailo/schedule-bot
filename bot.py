@@ -135,23 +135,29 @@ def is_weekend(date):
 
 
 # Функція для оновлення графіків на новий день
-async def update_schedules():
+def update_schedules():
+    global today_schedule, tomorrow_schedule
+
     kyiv_tz = pytz.timezone('Europe/Kiev')
     today_date = datetime.now(kyiv_tz)
     tomorrow_date = today_date + timedelta(days=1)
 
+    # Графік на сьогодні стає графіком на завтра
+    today_schedule = copy.deepcopy(tomorrow_schedule)
+
+    # Визначити, чи сьогодні чи завтра вихідний
     if is_weekend(tomorrow_date):
-        default_for_tomorrow = default_schedule['weekend']  # Вихідний графік
+        default_for_tomorrow = weekend_default_schedule  # Вихідний графік
     else:
-        default_for_tomorrow = default_schedule['weekday']  # Будній графік
+        default_for_tomorrow = weekday_default_schedule  # Будній графік
 
-    # Оновлюємо завтрашній графік на дефолтний (відповідно до типу дня)
-    tomorrow_schedule.clear()
-    tomorrow_schedule.update(copy.deepcopy(default_for_tomorrow))
+    # Новий графік на завтра - це стандартний графік
+    tomorrow_schedule = copy.deepcopy(default_for_tomorrow)
 
-    # Збереження змін у файлі
-    with open(TOMORROW_SCHEDULE_FILE, 'w', encoding='utf-8') as f:
-        json.dump(tomorrow_schedule, f, ensure_ascii=False, indent=4)
+    # Зберегти оновлені графіки
+    save_schedule(TODAY_SCHEDULE_FILE, today_schedule)
+    save_schedule(TOMORROW_SCHEDULE_FILE, tomorrow_schedule)
+
 
 
 def process_hours(input_range):
@@ -432,6 +438,18 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         print(e)
 
 
+# Функція для показу стандартного графіка на будній день
+async def show_weekday_default_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = await get_schedule_text(weekday_default_schedule, "стандартний графік (будній день)", context)
+    await update.message.reply_text(text)
+
+
+# Функція для показу стандартного графіка на вихідний день
+async def show_weekend_default_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = await get_schedule_text(weekend_default_schedule, "стандартний графік (вихідний день)", context)
+    await update.message.reply_text(text)
+
+
 def main() -> None:
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
@@ -439,6 +457,9 @@ def main() -> None:
     app.add_handler(CommandHandler("today", show_today_schedule))
     app.add_handler(CommandHandler("tomorrow", show_tomorrow_schedule))
     app.add_handler(CommandHandler("default", show_default_schedule))
+    app.add_handler(CommandHandler("weekday", show_weekday_default_schedule))
+    app.add_handler(CommandHandler("weekend", show_weekend_default_schedule))
+
     app.add_handler(CommandHandler("update", mechanical_update_schedules))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, edit_schedule))
 
