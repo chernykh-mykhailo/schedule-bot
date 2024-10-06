@@ -9,10 +9,12 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-import pytz  # Додати для роботи з часовими поясами
+import pytz
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.error import BadRequest
+from apscheduler.schedulers.background import BackgroundScheduler
+
 
 from config import TELEGRAM_TOKEN  # Імпорт токену з конфігураційного файлу
 
@@ -53,6 +55,7 @@ def format_name(name):
 
     # Повертаємо ім'я з першим емодзі без пробілів
     return f"{first_emoji}{clean_name}".strip() if first_emoji else clean_name.strip()
+
 
 # Налаштування логування
 logging.basicConfig(
@@ -182,10 +185,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     logging.info(f"Starting conversation with user: {user.first_name}")
     await update.message.reply_text(
-        "Вітаємо! Використовуйте команди /today для сьогоднішнього графіка, /tomorrow для завтрашнього, та /default для стандартного графіка.")
+        "Вітаємо! Використовуйте команди /today для сьогоднішнього графіка, "
+        "/tomorrow для завтрашнього, та /default для стандартного графіка.")
 
 
-async def mechanical_update_shcedules(update: Update, contextcontest: ContextTypes.DEFAULT_TYPE) -> None:
+async def mechanical_update_schedules(update: Update, contextcontest: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Графік змінено", update_schedules())
 
 
@@ -386,27 +390,31 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         print(e)
 
 
-# Командні обробники
 def main() -> None:
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
-    # Оновити графіки в 00:00
-    # if datetime.now(pytz.timezone('Europe/Kiev')).hour == 0:
-    # update_schedules()
-
-    # Запуск функції keep_alive в окремому потоці
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("today", show_today_schedule))
     app.add_handler(CommandHandler("tomorrow", show_tomorrow_schedule))
-    app.add_handler(CommandHandler("default", show_default_schedule))  # Додаємо команду для стандартного графіку
-    app.add_handler(CommandHandler("update", mechanical_update_shcedules))
+    app.add_handler(CommandHandler("default", show_default_schedule))
+    app.add_handler(CommandHandler("update", mechanical_update_schedules))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, edit_schedule))
 
+    # Створення планувальника
+    scheduler = BackgroundScheduler()
+    kyiv_tz = pytz.timezone('Europe/Kiev')
+
+    # Додавання роботи в планувальник
+    scheduler.add_job(update_schedules, 'cron', hour=0, minute=0, timezone=kyiv_tz)
+
+    # Запуск планувальника
+    scheduler.start()
+
+    # Запуск функції keep_alive в окремому потоці
     threading.Thread(target=keep_alive, daemon=True).start()
 
     app.run_polling()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
