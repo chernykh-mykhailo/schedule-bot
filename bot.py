@@ -459,7 +459,6 @@ def main() -> None:
     app.add_handler(CommandHandler("default", show_default_schedule))
     app.add_handler(CommandHandler("weekday", show_weekday_default_schedule))
     app.add_handler(CommandHandler("weekend", show_weekend_default_schedule))
-
     app.add_handler(CommandHandler("update", mechanical_update_schedules))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, edit_schedule))
 
