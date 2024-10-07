@@ -74,7 +74,8 @@ def load_schedule(chat_id, schedule_type, weekday_default, weekend_default):
         with open(file_name, 'r', encoding='utf-8') as f:
             return json.load(f)
     else:
-        today = datetime.today().weekday()
+        kyiv_tz = pytz.timezone('Europe/Kiev')
+        today = datetime.now(kyiv_tz).weekday()
         if today < 5:
             schedule = weekday_default
         else:
@@ -366,7 +367,19 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         else:
             response_message = "Не вдалося видалити години."
 
-    updated_schedule_message = f"Графік роботи Адміністраторів на {schedule_type}\n\n"
+    # Set the correct date label
+    if schedule_type == "today":
+        date_label = datetime.now(pytz.timezone('Europe/Kiev')).strftime("%d.%m.%Y")
+    elif schedule_type == "tomorrow":
+        date_label = (datetime.now(pytz.timezone('Europe/Kiev')) + timedelta(days=1)).strftime("%d.%m.%Y")
+    elif schedule_type == "weekday_default":
+        date_label = "стандартний графік (будній день)"
+    elif schedule_type == "weekend_default":
+        date_label = "стандартний графік (вихідний день)"
+    else:
+        date_label = "незнайомий графік"
+
+    updated_schedule_message = f"Графік роботи Адміністраторів на {date_label}\n\n"
     for time_slot in schedule:
         users = schedule[time_slot]
 
@@ -382,17 +395,16 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception as e:
         await update.message.reply_text("Не вдалося редагувати повідомлення. Спробуйте ще раз.")
         print(e)
-
 async def show_weekday_default_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
-    schedule = load_schedule(chat_id, "weekday_default", empty_weekday, empty_weekend)
+    schedule = load_schedule(chat_id, "weekday_default", empty_weekday, {})
     text = await get_schedule_text(schedule, "стандартний графік (будній день)", context)
     await update.message.reply_text(text)
 
 
 async def show_weekend_default_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
-    schedule = load_schedule(chat_id, "weekend_default", empty_weekday, empty_weekend)
+    schedule = load_schedule(chat_id, "weekend_default", empty_weekend, {})
     text = await get_schedule_text(schedule, "стандартний графік (вихідний день)", context)
     await update.message.reply_text(text)
 
