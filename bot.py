@@ -16,6 +16,7 @@ from telegram.error import BadRequest
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from config import TELEGRAM_TOKEN  # Імпорт токену з конфігураційного файлу
+from config import ADMIN_IDS  # Імпорт списку з айдішками адмінів
 
 
 def keep_alive():
@@ -70,6 +71,7 @@ TOMORROW_SCHEDULE_FILE = "tomorrow_schedule.json"
 DEFAULT_SCHEDULE_FILE = "default_schedule.json"
 WEEKDAY_DEFAULT_SCHEDULE_FILE = "weekday_default_schedule.json"
 WEEKEND_DEFAULT_SCHEDULE_FILE = "weekend_default_schedule.json"
+
 
 # Завантажити графік з файлів або ініціалізувати їх
 def load_schedule(file_name, default_schedule=None):
@@ -226,6 +228,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def mechanical_update_schedules(update: Update, contextcontest: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+
+    # Перевірка, чи є користувач адміністратором
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("У вас немає прав доступу до цієї команди.")
+        return
+
     await update.message.reply_text("Графік змінено", update_schedules())
 
 
