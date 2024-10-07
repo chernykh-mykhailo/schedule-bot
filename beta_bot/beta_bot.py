@@ -25,6 +25,7 @@ def keep_alive():
         time.sleep(1800)  # 1800 секунд = 30 хвилин
 
 
+# Функція для видалення емодзі
 def remove_emoji(text):
     return emoji.replace_emoji(text, replace='')
 
@@ -129,8 +130,10 @@ empty_weekend = {
         "00:00 - 01:00": []
 }
 
+# Load schedules for today and tomorrow
 today_schedule = copy.deepcopy(load_schedule('today_schedule.json', empty_weekday, empty_weekend))
 tomorrow_schedule = copy.deepcopy(load_schedule('tomorrow_schedule.json', empty_weekday, empty_weekend))
+# Update loading schedules
 weekday_default_schedule = copy.deepcopy(load_schedule('weekday_default_schedule.json', empty_weekday, {}))
 weekend_default_schedule = copy.deepcopy(load_schedule('weekend_default_schedule.json', empty_weekend, {}))
 
