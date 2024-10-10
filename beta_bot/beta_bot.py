@@ -1,3 +1,5 @@
+import signal
+import sys
 import emoji
 import re
 import asyncio
@@ -15,8 +17,32 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from telegram.error import BadRequest
 from apscheduler.schedulers.background import BackgroundScheduler
 
+# Додаємо шлях до секретного файлу у Python шлях
+sys.path.append('/etc/secrets')
+
 from config import TELEGRAM_TOKEN  # Імпорт токену з конфігураційного файлу
 from config import ADMIN_IDS  # Імпорт списку з айдішками адмінів
+
+LOCK_FILE = 'bot.lock'
+
+
+def create_lock():
+    if os.path.exists(LOCK_FILE):
+        print("Bot is already running.")
+        sys.exit()
+    else:
+        with open(LOCK_FILE, 'w') as f:
+            f.write(str(os.getpid()))
+
+
+def remove_lock():
+    if os.path.exists(LOCK_FILE):
+        os.remove(LOCK_FILE)
+
+
+def signal_handler(sig, frame):
+    remove_lock()
+    sys.exit(0)
 
 
 def keep_alive():
@@ -55,7 +81,6 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-
 logger = logging.getLogger(__name__)
 
 # Імена файлів для графіків
@@ -84,6 +109,7 @@ def load_schedule(chat_id, schedule_type, weekday_default, weekend_default):
         with open(file_name, 'w', encoding='utf-8') as f:
             json.dump(schedule, f, ensure_ascii=False, indent=4)
         return schedule
+
 
 def save_schedule(chat_id, schedule_type, schedule):
     file_name = get_schedule_file_name(chat_id, schedule_type)
@@ -154,6 +180,7 @@ def update_schedules():
 
             save_schedule(chat_id, "today", today_schedule)
             save_schedule(chat_id, "tomorrow", tomorrow_schedule)
+
 
 def process_hours(input_range):
     hours = input_range.split('-')
@@ -229,14 +256,17 @@ async def mechanical_update_schedules(update: Update, context: ContextTypes.DEFA
 async def show_today_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     today_schedule = load_schedule(chat_id, "today", empty_weekday, empty_weekend)
-    text = await get_schedule_text(today_schedule, datetime.now(pytz.timezone('Europe/Kiev')).strftime("%d.%m.%Y"), context)
+    text = await get_schedule_text(today_schedule, datetime.now(pytz.timezone('Europe/Kiev')).strftime("%d.%m.%Y"),
+                                   context)
     await update.message.reply_text(text)
 
 
 async def show_tomorrow_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     tomorrow_schedule = load_schedule(chat_id, "tomorrow", empty_weekday, empty_weekend)
-    text = await get_schedule_text(tomorrow_schedule, (datetime.now(pytz.timezone('Europe/Kiev')) + timedelta(days=1)).strftime("%d.%m.%Y"), context)
+    text = await get_schedule_text(tomorrow_schedule,
+                                   (datetime.now(pytz.timezone('Europe/Kiev')) + timedelta(days=1)).strftime(
+                                       "%d.%m.%Y"), context)
     await update.message.reply_text(text)
 
 
@@ -383,7 +413,8 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     for time_slot in schedule:
         users = schedule[time_slot]
 
-        user_name_tasks = [context.bot.get_chat_member(chat_id=update.effective_chat.id, user_id=user) for user in users]
+        user_name_tasks = [context.bot.get_chat_member(chat_id=update.effective_chat.id, user_id=user) for user in
+                           users]
 
         user_names_results = await asyncio.gather(*user_name_tasks)
 
@@ -395,6 +426,8 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception as e:
         await update.message.reply_text("Не вдалося редагувати повідомлення. Спробуйте ще раз.")
         print(e)
+
+
 async def show_weekday_default_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     schedule = load_schedule(chat_id, "weekday_default", empty_weekday, {})
@@ -410,6 +443,9 @@ async def show_weekend_default_schedule(update: Update, context: ContextTypes.DE
 
 
 def main() -> None:
+    signal.signal(signal.SIGINT, signal_handler)  # Обробка сигналу
+    create_lock()  # Створення lock-файлу
+
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -431,6 +467,12 @@ def main() -> None:
     threading.Thread(target=keep_alive, daemon=True).start()
 
     app.run_polling()
+
+    try:
+        app.run_polling()
+    finally:
+        remove_lock()  # Видалення lock-файлу при завершенні програми
+
 
 if __name__ == "__main__":
     main()
