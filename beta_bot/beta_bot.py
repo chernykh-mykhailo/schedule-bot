@@ -483,6 +483,9 @@ async def show_weekend_default_schedule(update: Update, context: ContextTypes.DE
 
 
 def main() -> None:
+    signal.signal(signal.SIGINT, signal_handler)  # Обробка сигналу
+    create_lock()  # Створення lock-файлу
+
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -503,7 +506,10 @@ def main() -> None:
     # Запуск функції keep_alive в окремому потоці
     threading.Thread(target=keep_alive, daemon=True).start()
 
-    app.run_polling()
+    try:
+        app.run_polling()
+    finally:
+        remove_lock()  # Видалення lock-файлу при завершенні програми
 
 
 if __name__ == "__main__":
