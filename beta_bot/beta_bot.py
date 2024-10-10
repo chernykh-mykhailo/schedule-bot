@@ -15,11 +15,11 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from telegram.error import BadRequest
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from config import TELEGRAM_TOKEN  # Імпорт токену з конфігураційного файлу
-from config import ADMIN_IDS  # Імпорт списку з айдішками адмінів
-
 # Додаємо шлях до секретного файлу у Python шлях
 sys.path.append('/etc/secrets')
+
+from config import TELEGRAM_TOKEN  # Імпорт токену з конфігураційного файлу
+from config import ADMIN_IDS  # Імпорт списку з айдішками адмінів
 
 def keep_alive():
     while True:
