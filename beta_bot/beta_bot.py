@@ -22,6 +22,25 @@ sys.path.append('/etc/secrets')
 from config import TELEGRAM_TOKEN  # Імпорт токену з конфігураційного файлу
 from config import ADMIN_IDS  # Імпорт списку з айдішками адмінів
 
+LOCK_FILE = 'bot.lock'
+
+def create_lock():
+    if os.path.exists(LOCK_FILE):
+        print("Bot is already running.")
+        sys.exit()
+    else:
+        with open(LOCK_FILE, 'w') as f:
+            f.write(str(os.getpid()))
+
+def remove_lock():
+    if os.path.exists(LOCK_FILE):
+        os.remove(LOCK_FILE)
+
+def signal_handler(sig, frame):
+    remove_lock()
+    sys.exit(0)
+
+
 def keep_alive():
     while True:
         print("Bot is still running...")
