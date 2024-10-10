@@ -8,6 +8,7 @@ import logging
 import os
 import threading
 import time
+import signal
 from datetime import datetime, timedelta
 
 import pytz
