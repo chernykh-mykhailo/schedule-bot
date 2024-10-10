@@ -1,4 +1,5 @@
 import emoji
+import sys
 import re
 import asyncio
 import copy
