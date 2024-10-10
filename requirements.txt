@@ -1,0 +1,4 @@
+apscheduler
+python-telegram-bot
+pytz
+emoji

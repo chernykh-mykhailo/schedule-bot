@@ -1,6 +1,7 @@
 import signal
 import sys
 import emoji
+import sys
 import re
 import asyncio
 import copy
@@ -9,6 +10,7 @@ import logging
 import os
 import threading
 import time
+import signal
 from datetime import datetime, timedelta
 
 import pytz
@@ -466,7 +468,10 @@ def main() -> None:
     # Run keep_alive in a separate thread
     threading.Thread(target=keep_alive, daemon=True).start()
 
-    app.run_polling()
+    try:
+        app.run_polling()
+    finally:
+        remove_lock()  # Видалення lock-файлу при завершенні програми
 
     try:
         app.run_polling()
