@@ -9,6 +9,8 @@ weekday_default_schedule.json
 weekend_default_schedule.json
 beta_bot/schedules
 
+bot.lock
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
