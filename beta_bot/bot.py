@@ -315,6 +315,10 @@ async def show_default_schedule(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None:
+        logging.error("Received an update without a message.")
+        return
+
     message = update.message.text.strip()
     chat_id = update.effective_chat.id
 
@@ -458,7 +462,6 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception as e:
         await update.message.reply_text("Не вдалося редагувати повідомлення. Спробуйте ще раз.")
         print(e)
-
 
 async def show_weekday_default_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
