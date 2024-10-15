@@ -1,4 +1,4 @@
-# bot.py
+# refactor_bot.py
 import logging
 import os
 import signal
