@@ -1,3 +1,4 @@
+import random
 import emoji
 import sys
 import re
@@ -9,6 +10,7 @@ import os
 import threading
 import time
 import signal
+import openai
 from datetime import datetime, timedelta
 
 import pytz
@@ -17,13 +19,19 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from telegram.error import BadRequest
 from apscheduler.schedulers.background import BackgroundScheduler
 
+from responses import responses_easy, responses_username
+
 # Додаємо шлях до секретного файлу у Python шлях (для хостингу)
 sys.path.append('/etc/secrets')
 
-from config import TELEGRAM_TOKEN  # Імпорт токену з конфігураційного файлу
+from config import TELEGRAM_TOKEN, MISTRAL_API_KEY, MISTRAL_API_URL  # Імпорт токену з конфігураційного файлу
 from config import ADMIN_IDS  # Імпорт списку з айдішками адмінів
+from config import OPENAI_API_KEY  #
 
 LOCK_FILE = 'bot.lock'
+
+# Використовуємо API ключ
+openai.api_key = OPENAI_API_KEY
 
 
 def create_lock():
@@ -243,11 +251,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/tomorrow для завтрашнього, та /default для стандартного графіка.")
 
 
-async def leave(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        "Що, анрег вже не працює?))")
-
-
 async def mechanical_update_schedules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
 
@@ -447,6 +450,17 @@ async def show_weekend_default_schedule(update: Update, context: ContextTypes.DE
     await update.message.reply_text(text)
 
 
+async def leave(update: Update, context):
+    response = random.choice(responses_easy)
+    await update.message.reply_text(response)
+
+
+async def leave_username(update: Update, context):
+    username = update.message.from_user.username
+    response = random.choice(responses_username).format(username=username)
+    await update.message.reply_text(response)
+
+
 def main() -> None:
     signal.signal(signal.SIGINT, signal_handler)  # Обробка сигналу
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -458,6 +472,7 @@ def main() -> None:
     app.add_handler(CommandHandler("weekday", show_weekday_default_schedule))
     app.add_handler(CommandHandler("weekend", show_weekend_default_schedule))
     app.add_handler(CommandHandler("update", mechanical_update_schedules))
+    app.add_handler(CommandHandler("leavethisgroup", leave_username))
     app.add_handler(CommandHandler("leave", leave))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, edit_schedule))
 
@@ -469,7 +484,6 @@ def main() -> None:
 
     # Run keep_alive in a separate thread
     threading.Thread(target=keep_alive, daemon=True).start()
-
 
     app.run_polling(poll_interval=1)
 
