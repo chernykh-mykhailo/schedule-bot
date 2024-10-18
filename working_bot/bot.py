@@ -243,6 +243,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/tomorrow для завтрашнього, та /default для стандартного графіка.")
 
 
+async def leave(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "Що, анрег вже не працює?))")
+
+
 async def mechanical_update_schedules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
 
@@ -444,8 +449,6 @@ async def show_weekend_default_schedule(update: Update, context: ContextTypes.DE
 
 def main() -> None:
     signal.signal(signal.SIGINT, signal_handler)  # Обробка сигналу
-    create_lock()  # Створення lock-файлу
-
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -455,6 +458,7 @@ def main() -> None:
     app.add_handler(CommandHandler("weekday", show_weekday_default_schedule))
     app.add_handler(CommandHandler("weekend", show_weekend_default_schedule))
     app.add_handler(CommandHandler("update", mechanical_update_schedules))
+    app.add_handler(CommandHandler("leave", leave))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, edit_schedule))
 
     # Create scheduler
@@ -466,15 +470,8 @@ def main() -> None:
     # Run keep_alive in a separate thread
     threading.Thread(target=keep_alive, daemon=True).start()
 
-    try:
-        app.run_polling()
-    finally:
-        remove_lock()  # Видалення lock-файлу при завершенні програми
 
-    try:
-        app.run_polling()
-    finally:
-        remove_lock()  # Видалення lock-файлу при завершенні програми
+    app.run_polling(poll_interval=1)
 
 
 if __name__ == "__main__":
