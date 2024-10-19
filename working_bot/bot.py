@@ -10,7 +10,6 @@ import os
 import threading
 import time
 import signal
-import openai
 from datetime import datetime, timedelta
 
 import pytz
@@ -24,14 +23,10 @@ from responses import responses_easy, responses_username
 # Додаємо шлях до секретного файлу у Python шлях (для хостингу)
 sys.path.append('/etc/secrets')
 
-from config import TELEGRAM_TOKEN, MISTRAL_API_KEY, MISTRAL_API_URL  # Імпорт токену з конфігураційного файлу
+from config import TELEGRAM_TOKEN # Імпорт токену з конфігураційного файлу
 from config import ADMIN_IDS  # Імпорт списку з айдішками адмінів
-from config import OPENAI_API_KEY  #
 
 LOCK_FILE = 'bot.lock'
-
-# Використовуємо API ключ
-openai.api_key = OPENAI_API_KEY
 
 
 def create_lock():
@@ -166,6 +161,79 @@ def is_weekend(date):
     return date.weekday() in (5, 6)
 
 
+STATS_DIR = "stats"
+SCHEDULES_DIR = "schedules"
+
+# Create directory for statistics if not exists
+if not os.path.exists(STATS_DIR):
+    os.makedirs(STATS_DIR)
+
+def get_stats_file_name(chat_id):
+    return os.path.join(STATS_DIR, f"{chat_id}.json")
+
+def load_statistics(chat_id):
+    file_name = get_stats_file_name(chat_id)
+    if os.path.exists(file_name):
+        try:
+            with open(file_name, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logging.error(f"Error loading statistics from {file_name}: {e}")
+            return {}
+    else:
+        return {}
+
+def save_statistics(chat_id, stats):
+    file_name = get_stats_file_name(chat_id)
+    try:
+        with open(file_name, 'w', encoding='utf-8') as f:
+            json.dump(stats, f, ensure_ascii=False, indent=4)
+        logging.info(f"Statistics saved successfully: {file_name}")
+    except Exception as e:
+        logging.error(f"Failed to save statistics: {file_name}, Error: {e}")
+
+async def stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    chat_stats = load_statistics(chat_id)
+
+    text = "Статистика чату:\n"
+    for user_id, stats in chat_stats.items():
+        try:
+            chat = await context.bot.get_chat(user_id)
+            user_name = chat.first_name or "unknown"
+        except BadRequest:
+            user_name = "unknown"
+
+        text += f"{user_name}: {stats.get('total', 0)} годин\n"
+
+    await update.message.reply_text(text)
+
+
+async def mystat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    user_id = str(update.effective_user.id)  # Ensure user_id is string
+    chat_stats = load_statistics(chat_id)
+
+    if user_id not in chat_stats:
+        await update.message.reply_text("У вас немає статистики.")
+        return
+
+    user_stats = chat_stats[user_id]
+    total_hours = user_stats.get('total', 0)
+    daily_stats = user_stats.get('daily', {})
+
+    text = f"Ваша статистика:\nЗагалом: {total_hours} годин\n\n"
+    text += "Статистика по дням тижня:\n"
+
+    # Якщо для дня немає даних, повертається 0 годин
+    days = ["Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота", "Неділя"]
+    for i, day in enumerate(days):
+        # Використовуємо get для отримання значення або 0, якщо не знайдено
+        text += f"{day}: {daily_stats.get(str(i), 0)} годин\n"
+
+    await update.message.reply_text(text)
+
+
 def update_schedules():
     kyiv_tz = pytz.timezone('Europe/Kiev')
     today_date = datetime.now(kyiv_tz)
@@ -177,13 +245,45 @@ def update_schedules():
             today_schedule = load_schedule(chat_id, "today", empty_weekday, empty_weekend)
             tomorrow_schedule = load_schedule(chat_id, "tomorrow", empty_weekday, empty_weekend)
 
-            today_schedule = copy.deepcopy(tomorrow_schedule)
+            # Calculate statistics for today's schedule
+            today_stats = {}
+            for time_slot, user_ids in today_schedule.items():
+                for user_id in user_ids:
+                    user_id = str(user_id)  # Ensure user_id is string
+                    if user_id not in today_stats:
+                        today_stats[user_id] = 1
+                    else:
+                        today_stats[user_id] += 1
 
+            # Load previous statistics for the chat
+            chat_stats = load_statistics(chat_id)
+
+            # Update total hours worked for each user
+            for user_id, hours in today_stats.items():
+                # Initialize user statistics if not already present
+                if user_id not in chat_stats:
+                    chat_stats[user_id] = {"total": 0, "daily": {}}
+
+                chat_stats[user_id]["total"] += hours
+
+                # Update daily statistics for the user
+                weekday = today_date.weekday()  # Це індекс дня тижня (0 для Понеділка і т.д.)
+                daily_stats = chat_stats[user_id].get('daily', {})
+                if str(weekday) not in daily_stats:
+                    daily_stats[str(weekday)] = hours
+                else:
+                    daily_stats[str(weekday)] += hours
+                chat_stats[user_id]['daily'] = daily_stats
+
+            # Save updated statistics for the chat
+            save_statistics(chat_id, chat_stats)
+
+            # Update schedules for today and tomorrow
+            today_schedule = copy.deepcopy(tomorrow_schedule)
             if is_weekend(tomorrow_date):
                 default_for_tomorrow = load_schedule(chat_id, "weekend_default", empty_weekday, empty_weekend)
             else:
                 default_for_tomorrow = load_schedule(chat_id, "weekday_default", empty_weekday, empty_weekend)
-
             tomorrow_schedule = copy.deepcopy(default_for_tomorrow)
 
             save_schedule(chat_id, "today", today_schedule)
@@ -474,6 +574,8 @@ def main() -> None:
     app.add_handler(CommandHandler("update", mechanical_update_schedules))
     app.add_handler(CommandHandler("leavethisgroup", leave_username))
     app.add_handler(CommandHandler("leave", leave))
+    app.add_handler(CommandHandler("stat", stat))
+    app.add_handler(CommandHandler("mystat", mystat))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, edit_schedule))
 
     # Create scheduler
