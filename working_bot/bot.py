@@ -396,6 +396,9 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     if not (message.startswith('+') or message.startswith('-')):
         return
+    if not update.message:
+        # If there is no message, return early
+        return
 
     user_id = update.effective_user.id
     user_name = update.effective_user.first_name or update.effective_user.username
