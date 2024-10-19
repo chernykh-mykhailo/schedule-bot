@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="Encoding">
+    <file url="file://$PROJECT_DIR$/alfa_bot/bot.py" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/alfa_bot/config.py" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/alfa_bot/handlers/__init__.py" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/alfa_bot/handlers/schedule.py" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/alfa_bot/handlers/stats.py" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/alfa_bot/handlers/user.py" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/alfa_bot/main.py" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/alfa_bot/scheduler.py" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/alfa_bot/utils.py" charset="UTF-8" />
     <file url="PROJECT" charset="windows-1251" />
   </component>
 </project>
