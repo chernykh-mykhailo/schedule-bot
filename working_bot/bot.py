@@ -186,6 +186,56 @@ def load_statistics(chat_id):
         return {}
 
 
+async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    user_id = str(update.effective_user.id)
+    chat_stats = load_statistics(chat_id)
+
+    if user_id not in chat_stats:
+        chat_stats[user_id] = {"total": 0, "daily": {}, "currency": 0, "name": ""}
+
+    earned_currency = random.randint(1, 100)
+    chat_stats[user_id]["currency"] += earned_currency
+
+    save_statistics(chat_id, chat_stats)
+    await update.message.reply_text(f"Ви заробили {earned_currency} монет. Загальний баланс: {chat_stats[user_id]['currency']} монет.")
+
+
+async def setname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    user_id = str(update.effective_user.id)
+    chat_stats = load_statistics(chat_id)
+
+    if user_id not in chat_stats:
+        chat_stats[user_id] = {"total": 0, "daily": {}, "currency": 0, "name": ""}
+
+    if context.args:
+        custom_name = ' '.join(context.args)
+
+        # Check if the name is not longer than 20 characters
+        if len(custom_name) > 20:
+            await update.message.reply_text("Ім'я не повинно бути довше за 20 символів.")
+            return
+
+        # Check if the name does not contain spaces
+        if ' ' in custom_name:
+            await update.message.reply_text("Ім'я не повинно містити пробілів.")
+            return
+
+        # Check if the user has enough currency
+        if chat_stats[user_id]["currency"] < 100:
+            await update.message.reply_text(f"Недостатньо грошей, ваш баланс: {chat_stats[user_id]['currency']} монет.")
+            return
+
+        # Deduct 100 currency units
+        chat_stats[user_id]["currency"] -= 100
+        chat_stats[user_id]["name"] = custom_name
+        save_statistics(chat_id, chat_stats)
+        await update.message.reply_text(f"Ваше ім'я було змінено на {custom_name}. Ваш новий баланс: {chat_stats[user_id]['currency']} монет.")
+    else:
+        await update.message.reply_text("Будь ласка, введіть ім'я після команди /setname.")
+
+
 def save_statistics(chat_id, stats):
     file_name = get_stats_file_name(chat_id)
     try:
@@ -204,7 +254,7 @@ async def stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     for user_id, stats in chat_stats.items():
         try:
             chat = await context.bot.get_chat(user_id)
-            user_name = chat.first_name or "unknown"
+            user_name = chat_stats.get(user_id, {}).get("name", update.effective_user.first_name or update.effective_user.username) or "unknown"
         except BadRequest:
             user_name = "unknown"
 
@@ -225,8 +275,9 @@ async def mystat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_stats = chat_stats[user_id]
     total_hours = user_stats.get('total', 0)
     daily_stats = user_stats.get('daily', {})
+    balance = user_stats.get('currency', 0)
 
-    text = f"Ваша статистика:\nЗагалом: {total_hours} годин\n\n"
+    text = f"Ваша статистика:\nЗагалом: {total_hours} годин\nБаланс: {balance} монет\n\n"
     text += "Статистика по дням тижня:\n"
 
     # Якщо для дня немає даних, повертається 0 годин
@@ -258,7 +309,7 @@ async def your_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             chat = await context.bot.get_chat(user)
             if chat.username == username:
-                user_id = str(user)
+                user_id = user
                 break
         except BadRequest:
             continue
@@ -270,8 +321,9 @@ async def your_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_stats = chat_stats[user_id]
     total_hours = user_stats.get('total', 0)
     daily_stats = user_stats.get('daily', {})
+    balance = user_stats.get('currency', 0)
 
-    text = f"Статистика користувача @{username}:\nЗагалом: {total_hours} годин\n\n"
+    text = f"Статистика користувача @{username}:\nЗагалом: {total_hours} годин\nБаланс: {balance} монет\n\n"
     text += "Статистика по дням тижня:\n"
 
     days = ["Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота", "Неділя"]
@@ -370,20 +422,25 @@ def process_hours(input_range):
     return time_slots
 
 
-async def get_schedule_text(schedule, date_label, context):
+async def get_schedule_text(schedule, date_label, context, update):
     text = f"Графік роботи Адміністраторів на {date_label}\n\n"
 
     for time_slot, user_ids in schedule.items():
         admins = []
         for user_id in user_ids:
-            try:
-                chat = await context.bot.get_chat(user_id)
-                if chat.first_name:
-                    admins.append(format_name(chat.first_name))
-                else:
-                    admins.append("–")
-            except BadRequest:
-                admins.append("unknown")
+            user_id = str(user_id)
+            chat_stats = load_statistics(update.effective_chat.id)
+            if user_id in chat_stats and chat_stats[user_id].get("name"):
+                admins.append(chat_stats[user_id]["name"])
+            else:
+                try:
+                    chat = await context.bot.get_chat(user_id)
+                    if chat.first_name:
+                        admins.append(format_name(chat.first_name))
+                    else:
+                        admins.append("–")
+                except BadRequest:
+                    admins.append("unknown")
 
         admins_str = ' – '.join(admins) if admins else "–"
         text += f"{time_slot} – {admins_str}\n"
@@ -412,29 +469,38 @@ async def mechanical_update_schedules(update: Update, context: ContextTypes.DEFA
 async def show_today_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     today_schedule = load_schedule(chat_id, "today", empty_weekday, empty_weekend)
-    text = await get_schedule_text(today_schedule, datetime.now(pytz.timezone('Europe/Kiev')).strftime("%d.%m.%Y"),
-                                   context)
+    text = await get_schedule_text(today_schedule, datetime.now(pytz.timezone('Europe/Kiev')).strftime("%d.%m.%Y"), context, update)
     await update.message.reply_text(text)
-
 
 async def show_tomorrow_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     tomorrow_schedule = load_schedule(chat_id, "tomorrow", empty_weekday, empty_weekend)
-    text = await get_schedule_text(tomorrow_schedule,
-                                   (datetime.now(pytz.timezone('Europe/Kiev')) + timedelta(days=1)).strftime(
-                                       "%d.%m.%Y"), context)
+    text = await get_schedule_text(tomorrow_schedule, (datetime.now(pytz.timezone('Europe/Kiev')) + timedelta(days=1)).strftime("%d.%m.%Y"), context, update)
     await update.message.reply_text(text)
-
 
 async def show_default_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     current_day = datetime.now(pytz.timezone('Europe/Kiev')).weekday()
     if current_day < 5:
         schedule = load_schedule(chat_id, "weekday_default", empty_weekday, empty_weekend)
-        text = await get_schedule_text(schedule, "стандартний графік (будній день)", context)
+        text = await get_schedule_text(schedule, "стандартний графік (будній день)", context, update)
     else:
         schedule = load_schedule(chat_id, "weekend_default", empty_weekday, empty_weekend)
-        text = await get_schedule_text(schedule, "стандартний графік (вихідний день)", context)
+        text = await get_schedule_text(schedule, "стандартний графік (вихідний день)", context, update)
+    await update.message.reply_text(text)
+
+
+async def show_weekday_default_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    schedule = load_schedule(chat_id, "weekday_default", empty_weekday, empty_weekday)
+    text = await get_schedule_text(schedule, "стандартний графік (будній день)", context, update)
+    await update.message.reply_text(text)
+
+
+async def show_weekend_default_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    schedule = load_schedule(chat_id, "weekend_default", empty_weekend, empty_weekend)
+    text = await get_schedule_text(schedule, "стандартний графік (вихідний день)", context, update)
     await update.message.reply_text(text)
 
 
@@ -449,7 +515,8 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     user_id = update.effective_user.id
-    user_name = update.effective_user.first_name or update.effective_user.username
+    chat_stats = load_statistics(chat_id)
+    user_name = chat_stats.get(user_id, {}).get("name", update.effective_user.first_name or update.effective_user.username)
 
     if update.message.reply_to_message:
         reply_text = update.message.reply_to_message.text
@@ -572,33 +639,30 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     for time_slot in schedule:
         users = schedule[time_slot]
 
-        user_name_tasks = [context.bot.get_chat_member(chat_id=update.effective_chat.id, user_id=user) for user in
-                           users]
+        user_names = []
+        for user_id in users:
+            user_id = str(user_id)
+            chat_stats = load_statistics(update.effective_chat.id)
+            if user_id in chat_stats and chat_stats[user_id].get("name"):
+                user_names.append(chat_stats[user_id]["name"])
+            else:
+                try:
+                    chat = await context.bot.get_chat(user_id)
+                    if chat.first_name:
+                        user_names.append(format_name(chat.first_name))
+                    else:
+                        user_names.append("–")
+                except BadRequest:
+                    user_names.append("unknown")
 
-        user_names_results = await asyncio.gather(*user_name_tasks)
-
-        user_names = ' – '.join([format_name(member.user.first_name) for member in user_names_results]) or "–"
-        updated_schedule_message += f"{time_slot}: {user_names}\n"
+        user_names_str = ' – '.join(user_names) if user_names else "–"
+        updated_schedule_message += f"{time_slot}: {user_names_str}\n"
 
     try:
         await update.message.reply_to_message.edit_text(updated_schedule_message + '\n' + response_message)
     except Exception as e:
         await update.message.reply_text("Не вдалося редагувати повідомлення. Спробуйте ще раз.")
         print(e)
-
-
-async def show_weekday_default_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    chat_id = update.effective_chat.id
-    schedule = load_schedule(chat_id, "weekday_default", empty_weekday, empty_weekday)
-    text = await get_schedule_text(schedule, "стандартний графік (будній день)", context)
-    await update.message.reply_text(text)
-
-
-async def show_weekend_default_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    chat_id = update.effective_chat.id
-    schedule = load_schedule(chat_id, "weekend_default", empty_weekend, empty_weekend)
-    text = await get_schedule_text(schedule, "стандартний графік (вихідний день)", context)
-    await update.message.reply_text(text)
 
 
 async def leave(update: Update, context):
@@ -628,6 +692,8 @@ def main() -> None:
     app.add_handler(CommandHandler("stat", stat))
     app.add_handler(CommandHandler("mystat", mystat))
     app.add_handler(CommandHandler("your_stat", your_stat))
+    app.add_handler(CommandHandler("earn", earn))
+    app.add_handler(CommandHandler("setname", setname))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, edit_schedule))
 
     # Create scheduler
@@ -640,6 +706,7 @@ def main() -> None:
     threading.Thread(target=keep_alive, daemon=True).start()
 
     app.run_polling(poll_interval=1)
+
 
 if __name__ == "__main__":
     main()
