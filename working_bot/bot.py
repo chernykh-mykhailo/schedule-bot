@@ -178,7 +178,12 @@ def load_statistics(chat_id):
     if os.path.exists(file_name):
         try:
             with open(file_name, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                stats = json.load(f)
+                # Ensure each user has a currency field
+                for user_id, user_stats in stats.items():
+                    if 'currency' not in user_stats:
+                        user_stats['currency'] = 0
+                return stats
         except Exception as e:
             logging.error(f"Error loading statistics from {file_name}: {e}")
             return {}
@@ -192,14 +197,23 @@ async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_stats = load_statistics(chat_id)
 
     if user_id not in chat_stats:
-        chat_stats[user_id] = {"total": 0, "daily": {}, "currency": 0, "name": ""}
+        chat_stats[user_id] = {"total": 0, "daily": {}, "currency": 0, "name": "", "last_earn": None}
+
+    last_earn = chat_stats[user_id].get("last_earn")
+    now = datetime.datetime.now()
+
+    if last_earn:
+        last_earn_time = datetime.datetime.strptime(last_earn, "%Y-%m-%d %H:%M:%S")
+        if (now - last_earn_time).days < 1:
+            await update.message.reply_text("Ви вже заробили монети сьогодні. Спробуйте знову завтра.")
+            return
 
     earned_currency = random.randint(1, 100)
     chat_stats[user_id]["currency"] += earned_currency
+    chat_stats[user_id]["last_earn"] = now.strftime("%Y-%m-%d %H:%M:%S")
 
     save_statistics(chat_id, chat_stats)
     await update.message.reply_text(f"Ви заробили {earned_currency} монет. Загальний баланс: {chat_stats[user_id]['currency']} монет.")
-
 
 async def setname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
@@ -222,6 +236,12 @@ async def setname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text("Ім'я не повинно містити пробілів.")
             return
 
+        # Check if the name is unique
+        for user_stats in chat_stats.values():
+            if user_stats.get("name") == custom_name:
+                await update.message.reply_text("Це ім'я вже використовується іншим користувачем.")
+                return
+
         # Check if the user has enough currency
         if chat_stats[user_id]["currency"] < 100:
             await update.message.reply_text(f"Недостатньо грошей, ваш баланс: {chat_stats[user_id]['currency']} монет.")
@@ -234,7 +254,6 @@ async def setname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(f"Ваше ім'я було змінено на {custom_name}. Ваш новий баланс: {chat_stats[user_id]['currency']} монет.")
     else:
         await update.message.reply_text("Будь ласка, введіть ім'я після команди /setname.")
-
 
 def save_statistics(chat_id, stats):
     file_name = get_stats_file_name(chat_id)
