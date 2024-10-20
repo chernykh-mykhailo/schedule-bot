@@ -23,7 +23,7 @@ from responses import responses_easy, responses_username
 # Додаємо шлях до секретного файлу у Python шлях (для хостингу)
 sys.path.append('/etc/secrets')
 
-from config import TELEGRAM_TOKEN # Імпорт токену з конфігураційного файлу
+from config import TELEGRAM_TOKEN  # Імпорт токену з конфігураційного файлу
 from config import ADMIN_IDS  # Імпорт списку з айдішками адмінів
 
 LOCK_FILE = 'bot.lock'
@@ -185,6 +185,7 @@ def load_statistics(chat_id):
     else:
         return {}
 
+
 def save_statistics(chat_id, stats):
     file_name = get_stats_file_name(chat_id)
     try:
@@ -193,6 +194,7 @@ def save_statistics(chat_id, stats):
         logging.info(f"Statistics saved successfully: {file_name}")
     except Exception as e:
         logging.error(f"Failed to save statistics: {file_name}, Error: {e}")
+
 
 async def stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
@@ -407,6 +409,17 @@ async def mechanical_update_schedules(update: Update, context: ContextTypes.DEFA
     await update.message.reply_text("Графік змінено", update_schedules())
 
 
+async def mechanical_track(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("У вас немає прав доступу до цієї команди.")
+        return
+
+    await update.message.reply_text("Перевірка присутності увімкнена")
+    await track_user_presence(context)
+
+
 async def show_today_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     today_schedule = load_schedule(chat_id, "today", empty_weekday, empty_weekend)
@@ -610,8 +623,78 @@ async def leave_username(update: Update, context):
     await update.message.reply_text(response)
 
 
+async def find_schedule_message_id(context, chat_id, date_str):
+    async for message in context.bot.get_chat_history(chat_id, limit=100):
+        if date_str in message.text:
+            return message.message_id
+    return None
+
+
+async def track_user_presence(context: ContextTypes.DEFAULT_TYPE):
+    kyiv_tz = pytz.timezone('Europe/Kiev')
+    today_date = datetime.now(kyiv_tz)
+    schedule_files = [f for f in os.listdir(SCHEDULES_DIR) if f.endswith("_today.json")]
+
+    for file_name in schedule_files:
+        chat_id = file_name.split("_")[0]
+        schedule = load_schedule(chat_id, "today", empty_weekday, empty_weekend)
+        schedule_message_id = await find_schedule_message_id(context, chat_id, today_date.strftime("%d.%m.%Y"))
+
+        if not schedule_message_id:
+            # Логіка, якщо не знайдено повідомлення
+            print("Не знайдено повідомлення з графіком для сьогоднішньої дати")
+            return
+
+        now = datetime.now(pytz.timezone('Europe/Kyiv'))
+        current_hour = now.strftime('%H:00')
+
+        if current_hour in schedule and schedule[current_hour]:
+            scheduled_users = schedule[current_hour]  # Users scheduled for the current hour
+            remaining_users = scheduled_users.copy()  # Copy the list of users
+            absent_users = []  # List of absent users
+
+            # Get the schedule message for today
+            today_schedule_message = await context.bot.get_message(chat_id, schedule_message_id)
+
+            # Check for "here" messages within the first 10 minutes of the hour
+            end_time = datetime.now() + timedelta(minutes=10)
+            while datetime.now() < end_time:
+                for scheduled_user in scheduled_users:
+                    def message_filter(message):
+                        return message.text.lower() == "тут" and message.from_user.username == scheduled_user
+
+                    try:
+                        # Wait for "here" from each user for 1 minute
+                        message = await context.bot.wait_for_message(filters=message_filter, timeout=60)
+                        if message:
+                            # If the user is present, update the schedule
+                            updated_text = f"{today_schedule_message.text}\n{scheduled_user} присутній ✅"
+                            await context.bot.edit_message_text(
+                                chat_id=chat_id,
+                                message_id=schedule_message_id,
+                                text=updated_text
+                            )
+                            remaining_users.remove(scheduled_user)
+                    except asyncio.TimeoutError:
+                        continue
+
+            # Mark absent users
+            absent_users = remaining_users
+            if absent_users:
+                updated_text = f"{today_schedule_message.text}\n" + "\n".join([f"{user} відсутній ❌" for user in absent_users])
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=schedule_message_id,
+                    text=updated_text
+                )
+
+            # Update the schedule for the current hour
+            schedule[current_hour] = remaining_users
+            save_schedule(chat_id, "today", schedule)
+
+
 def main() -> None:
-    signal.signal(signal.SIGINT, signal_handler)  # Обробка сигналу
+    signal.signal(signal.SIGINT, signal_handler)  # Handle signal
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -621,6 +704,7 @@ def main() -> None:
     app.add_handler(CommandHandler("weekday", show_weekday_default_schedule))
     app.add_handler(CommandHandler("weekend", show_weekend_default_schedule))
     app.add_handler(CommandHandler("update", mechanical_update_schedules))
+    app.add_handler(CommandHandler("track", mechanical_track))
     app.add_handler(CommandHandler("leavethisgroup", leave_username))
     app.add_handler(CommandHandler("leave", leave))
     app.add_handler(CommandHandler("stat", stat))
@@ -632,13 +716,13 @@ def main() -> None:
     scheduler = BackgroundScheduler()
     kyiv_tz = pytz.timezone('Europe/Kiev')
     scheduler.add_job(update_schedules, 'cron', hour=0, minute=0, timezone=kyiv_tz)
+    scheduler.add_job(track_user_presence, 'interval', hours=1, timezone=kyiv_tz, args=[app]) # Track user presence every hour
     scheduler.start()
 
     # Run keep_alive in a separate thread
     threading.Thread(target=keep_alive, daemon=True).start()
 
     app.run_polling(poll_interval=1)
-
 
 if __name__ == "__main__":
     main()
