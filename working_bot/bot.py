@@ -168,8 +168,10 @@ SCHEDULES_DIR = "schedules"
 if not os.path.exists(STATS_DIR):
     os.makedirs(STATS_DIR)
 
+
 def get_stats_file_name(chat_id):
     return os.path.join(STATS_DIR, f"{chat_id}.json")
+
 
 def load_statistics(chat_id):
     file_name = get_stats_file_name(chat_id)
@@ -234,10 +236,54 @@ async def mystat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(text)
 
 
+async def your_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    args = context.args
+    if not args:
+        await stat(update, context)
+        return
+    user_id = update.effective_user.id
+
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("У вас немає прав доступу до цієї команди.")
+        return
+
+    username = args[0].lstrip('@')
+    chat_id = update.effective_chat.id
+    chat_stats = load_statistics(chat_id)
+
+    user_id = None
+    for user in chat_stats:
+        try:
+            chat = await context.bot.get_chat(user)
+            if chat.username == username:
+                user_id = str(user)
+                break
+        except BadRequest:
+            continue
+
+    if not user_id or user_id not in chat_stats:
+        await update.message.reply_text(f"У користувача @{username} немає статистики.")
+        return
+
+    user_stats = chat_stats[user_id]
+    total_hours = user_stats.get('total', 0)
+    daily_stats = user_stats.get('daily', {})
+
+    text = f"Статистика користувача @{username}:\nЗагалом: {total_hours} годин\n\n"
+    text += "Статистика по дням тижня:\n"
+
+    days = ["Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота", "Неділя"]
+    for i, day in enumerate(days):
+        text += f"{day}: {daily_stats.get(str(i), 0)} годин\n"
+
+    await update.message.reply_text(text)
+
+
 def update_schedules():
     kyiv_tz = pytz.timezone('Europe/Kiev')
     today_date = datetime.now(kyiv_tz)
     tomorrow_date = today_date + timedelta(days=1)
+    previos_date = today_date - timedelta(days=1)
 
     for file_name in os.listdir(SCHEDULES_DIR):
         if file_name.endswith("_today.json"):
@@ -267,7 +313,7 @@ def update_schedules():
                 chat_stats[user_id]["total"] += hours
 
                 # Update daily statistics for the user
-                weekday = today_date.weekday()  # Це індекс дня тижня (0 для Понеділка і т.д.)
+                weekday = previos_date.weekday()  # Це індекс дня тижня (0 для Понеділка і т.д.)
                 daily_stats = chat_stats[user_id].get('daily', {})
                 if str(weekday) not in daily_stats:
                     daily_stats[str(weekday)] = hours
@@ -579,6 +625,7 @@ def main() -> None:
     app.add_handler(CommandHandler("leave", leave))
     app.add_handler(CommandHandler("stat", stat))
     app.add_handler(CommandHandler("mystat", mystat))
+    app.add_handler(CommandHandler("your_stat", your_stat))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, edit_schedule))
 
     # Create scheduler
