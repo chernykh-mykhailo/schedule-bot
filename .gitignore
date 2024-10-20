@@ -10,6 +10,7 @@ weekend_default_schedule.json
 working_bot/schedules
 
 bot.lock
+refactor_aiogram_bot/COPILOT.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
