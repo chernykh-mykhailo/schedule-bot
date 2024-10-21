@@ -13,8 +13,8 @@ import signal
 from datetime import datetime, timedelta
 
 import pytz
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from telegram.error import BadRequest
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -27,7 +27,23 @@ from config import TELEGRAM_TOKEN  # Імпорт токену з конфігу
 from config import ADMIN_IDS  # Імпорт списку з айдішками адмінів
 
 LOCK_FILE = 'bot.lock'
+
+SKINS_DIR = "skins"
+SKINS_PER_PAGE = 5
+
 kyiv_tz = pytz.timezone('Europe/Kiev')
+
+
+
+# Імена файлів для графіків
+SCHEDULES_DIR = "schedules"
+if not os.path.exists(SCHEDULES_DIR):
+    os.makedirs(SCHEDULES_DIR)
+
+STATS_DIR = "stats"
+# Create directory for statistics if not exists
+if not os.path.exists(STATS_DIR):
+    os.makedirs(STATS_DIR)
 
 
 def create_lock():
@@ -85,16 +101,11 @@ def get_user_name(stats, chat, user_id):
 
 
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
 )
 
 logger = logging.getLogger(__name__)
-
-# Імена файлів для графіків
-SCHEDULES_DIR = "schedules"
-if not os.path.exists(SCHEDULES_DIR):
-    os.makedirs(SCHEDULES_DIR)
 
 
 def get_schedule_file_name(chat_id, schedule_type):
@@ -163,14 +174,6 @@ empty_weekend = {
 
 def is_weekend(date):
     return date.weekday() in (5, 6)
-
-
-STATS_DIR = "stats"
-SCHEDULES_DIR = "schedules"
-
-# Create directory for statistics if not exists
-if not os.path.exists(STATS_DIR):
-    os.makedirs(STATS_DIR)
 
 
 def get_stats_file_name(chat_id):
@@ -373,6 +376,131 @@ async def setname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     else:
         await update.message.reply_text("Будь ласка, введіть ім'я після команди /setname.")
 
+
+## Функція для отримання списку скінів
+def list_skins():
+    skins = []
+    try:
+        for file_name in os.listdir(SKINS_DIR):
+            if file_name.endswith(('.png', '.jpg', '.jpeg')):
+                skins.append(file_name)
+        logger.info(f"Знайдено скіни: {skins}")
+    except Exception as e:
+        logger.error(f"Помилка при завантаженні скінів: {e}")
+    return skins
+
+# Функція для отримання скінів на сторінці
+def get_skin_page(page_number):
+    skins = list_skins()
+    start_index = page_number * SKINS_PER_PAGE
+    end_index = start_index + SKINS_PER_PAGE
+    return skins[start_index:end_index], len(skins)
+
+# Основна команда для магазину
+async def shop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.info("Команда /shop виконується")
+    page_number = int(context.args[0]) if context.args else 0
+    logger.info(f"Поточна сторінка: {page_number}")
+
+    skins, total_skins = get_skin_page(page_number)
+    logger.info(f"Скіни на сторінці: {skins}")
+
+    total_pages = (total_skins + SKINS_PER_PAGE - 1) // SKINS_PER_PAGE
+    logger.info(f"Загальна кількість сторінок: {total_pages}")
+
+    # Створення кнопок для кожного скіна і навігації
+    keyboard = []
+    for skin in skins:
+        keyboard.append([InlineKeyboardButton(f"Купити {skin}", callback_data=f"buy_skin|{skin}")])
+
+    nav_buttons = []
+    if page_number > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ Попередня", callback_data=f"shop {page_number - 1}"))
+    if page_number < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton("➡️ Наступна", callback_data=f"shop {page_number + 1}"))
+
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Відправлення повідомлення зі скінами
+    if skins:
+        await update.message.reply_text("Перегляньте доступні скіни:", reply_markup=reply_markup)
+        logger.info(f"Відправлені скіни: {skins}")
+
+        # Відправлення фото скінів
+        media_group = []
+        for skin in skins:
+            skin_path = os.path.join(SKINS_DIR, skin)
+            try:
+                media_group.append(InputMediaPhoto(media=open(skin_path, 'rb'), caption=skin))
+            except Exception as e:
+                logger.error(f"Помилка відкриття скіна {skin}: {e}")
+
+        if media_group:
+            await update.message.reply_media_group(media_group)
+            logger.info(f"Відправлено медіа-групу: {media_group}")
+    else:
+        await update.message.reply_text("Немає доступних скінів.")
+        logger.warning("Скіни не знайдені на сторінці")
+
+# Обробка колбеків від кнопок
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    logger.info(f"Received callback: {query.data}")
+
+    try:
+        command, argument = query.data.split("|")
+        logger.info(f"Callback command: {command}, argument: {argument}")
+    except ValueError:
+        logger.warning(f"Invalid callback data: {query.data}")
+        return
+
+    if command == "shop":
+        logger.info("Processing shop command")
+        await shop_command(query.message, context, argument)
+    elif command == "buy_skin":
+        logger.info("Processing buy_skin command")
+        await buy_skin(query.message, context, argument)
+
+
+
+
+# Покупка скіна
+async def buy_skin(update: Update, context: ContextTypes.DEFAULT_TYPE, skin_name: str) -> None:
+    logger.info(f"Команда покупки скіна: {skin_name}")
+    user_id = str(update.effective_user.id)
+    chat_id = update.effective_chat.id
+    chat_stats = load_statistics(chat_id)
+
+    if skin_name not in list_skins():
+        await update.message.reply_text("Скін не знайдено.")
+        logger.warning(f"Скін {skin_name} не знайдено")
+        return
+
+    if user_id not in chat_stats:
+        chat_stats[user_id] = {"total": 0, "daily": {}, "currency": 0, "name": "", "last_earn": None, "skin": None}
+
+    if chat_stats[user_id]["skin"] == skin_name:
+        await update.message.reply_text("Ви вже маєте цей скін.")
+        logger.info(f"Користувач {user_id} вже має скін {skin_name}")
+        return
+
+    if chat_stats[user_id]["currency"] < 50:
+        await update.message.reply_text(f"Недостатньо грошей. Цей скін коштує 50 сяйва✨. Ваш баланс: {chat_stats[user_id]['currency']} сяйва✨.")
+        logger.warning(f"Користувачу {user_id} не вистачає грошей на скін {skin_name}")
+        return
+
+    chat_stats[user_id]["currency"] -= 50
+    chat_stats[user_id]["skin"] = skin_name
+    save_statistics(chat_id, chat_stats)
+
+    skin_path = os.path.join(SKINS_DIR, skin_name)
+    await update.message.reply_photo(photo=open(skin_path, 'rb'), caption=f"Ви придбали скін {skin_name}. Ваш новий баланс: {chat_stats[user_id]['currency']} сяйва✨.")
+    logger.info(f"Користувач {user_id} придбав скін {skin_name}")
+
 def save_statistics(chat_id, stats):
     file_name = get_stats_file_name(chat_id)
     try:
@@ -410,7 +538,7 @@ async def all_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def mystat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
-    user_id = str(update.effective_user.id)  # Ensure user_id is string
+    user_id = str(update.effective_user.id)
     chat_stats = load_statistics(chat_id)
 
     if user_id not in chat_stats:
@@ -421,17 +549,20 @@ async def mystat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     total_hours = user_stats.get('total', 0)
     daily_stats = user_stats.get('daily', {})
     balance = user_stats.get('currency', 0)
+    skin = user_stats.get('skin', None)
 
     text = f"Ваша статистика:\nЗагалом: {total_hours} годин\nБаланс: {balance} сяйва✨\n\n"
     text += "Статистика по дням тижня:\n"
 
-    # Якщо для дня немає даних, повертається 0 годин
     days = ["Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота", "Неділя"]
     for i, day in enumerate(days):
-        # Використовуємо get для отримання значення або 0, якщо не знайдено
         text += f"{day}: {daily_stats.get(str(i), 0)} годин\n"
 
-    await update.message.reply_text(text)
+    if skin:
+        skin_path = os.path.join(SKINS_DIR, skin)
+        await update.message.reply_photo(photo=open(skin_path, 'rb'), caption=text)
+    else:
+        await update.message.reply_text(text)
 
 
 async def your_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -472,6 +603,7 @@ async def your_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     total_hours = user_stats.get('total', 0)
     daily_stats = user_stats.get('daily', {})
     balance = user_stats.get('currency', 0)
+    skin = user_stats.get('skin', None)
 
     text = f"Статистика користувача @{username}:\nЗагалом: {total_hours} годин\nБаланс: {balance} сяйва✨\n\n"
     text += "Статистика по дням тижня:\n"
@@ -479,6 +611,12 @@ async def your_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     days = ["Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота", "Неділя"]
     for i, day in enumerate(days):
         text += f"{day}: {daily_stats.get(str(i), 0)} годин\n"
+
+    if skin:
+        skin_path = os.path.join(SKINS_DIR, skin)
+        await update.message.reply_photo(photo=open(skin_path, 'rb'), caption=text)
+    else:
+        await update.message.reply_text(text)
 
     await update.message.reply_text(text)
 
@@ -645,36 +783,36 @@ def update_schedules():
             save_schedule(chat_id, "tomorrow", tomorrow_schedule)
 
 
-def process_hours(input_range):
-    hours = input_range.split('-')
-
-    if len(hours) != 2:
-        return "Будь ласка, введіть правильний час (формат: x-y)."
-
-    try:
-        start_hour = int(hours[0]) % 24
-        end_hour = int(hours[1]) % 24
-    except ValueError:
-        return "Будь ласка, введіть правильний час (тільки числа)."
-
-    time_slots = []
-
-    if start_hour <= end_hour:
-        for hour in range(start_hour, end_hour + 1):
-            next_hour = (hour + 1) % 24
-            time_slot = f"{hour:02d}:00 - {next_hour:02d}:00"
-            time_slots.append(time_slot)
-    else:
-        for hour in range(start_hour, 24):
-            next_hour = (hour + 1) % 24
-            time_slot = f"{hour:02d}:00 - {next_hour:02d}:00"
-            time_slots.append(time_slot)
-        for hour in range(0, end_hour + 1):
-            next_hour = (hour + 1) % 24
-            time_slot = f"{hour:02d}:00 - {next_hour:02d}:00"
-            time_slots.append(time_slot)
-
-    return time_slots
+# def process_hours(input_range):
+#     hours = input_range.split('-')
+#
+#     if len(hours) != 2:
+#         return "Будь ласка, введіть правильний час (формат: x-y)."
+#
+#     try:
+#         start_hour = int(hours[0]) % 24
+#         end_hour = int(hours[1]) % 24
+#     except ValueError:
+#         return "Будь ласка, введіть правильний час (тільки числа)."
+#
+#     time_slots = []
+#
+#     if start_hour <= end_hour:
+#         for hour in range(start_hour, end_hour + 1):
+#             next_hour = (hour + 1) % 24
+#             time_slot = f"{hour:02d}:00 - {next_hour:02d}:00"
+#             time_slots.append(time_slot)
+#     else:
+#         for hour in range(start_hour, 24):
+#             next_hour = (hour + 1) % 24
+#             time_slot = f"{hour:02d}:00 - {next_hour:02d}:00"
+#             time_slots.append(time_slot)
+#         for hour in range(0, end_hour + 1):
+#             next_hour = (hour + 1) % 24
+#             time_slot = f"{hour:02d}:00 - {next_hour:02d}:00"
+#             time_slots.append(time_slot)
+#
+#     return time_slots
 
 
 async def get_schedule_text(schedule, date_label, context, update):
@@ -982,10 +1120,12 @@ def main() -> None:
     app.add_handler(CommandHandler("top_earners", top_earners))
     app.add_handler(CommandHandler("top_workers", top_workers))
     app.add_handler(CommandHandler("top_workers_day", top_workers_day))
+    app.add_handler(CommandHandler("shop", shop_command))
     app.add_handler(CommandHandler("reset_stat", reset_stat))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.Regex(r'^[+-]') & ~filters.COMMAND, confirm_reset_stat_text))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^[+-]'), edit_schedule))
+    app.add_handler(CallbackQueryHandler(button))
 
     # Create scheduler
     scheduler = BackgroundScheduler()
