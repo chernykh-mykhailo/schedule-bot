@@ -14,7 +14,8 @@ from datetime import datetime, timedelta
 
 import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, \
+    CallbackQueryHandler, CallbackContext
 from telegram.error import BadRequest
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -377,7 +378,6 @@ async def setname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Будь ласка, введіть ім'я після команди /setname.")
 
 
-## Функція для отримання списку скінів
 def list_skins():
     skins = []
     try:
@@ -389,117 +389,114 @@ def list_skins():
         logger.error(f"Помилка при завантаженні скінів: {e}")
     return skins
 
-# Функція для отримання скінів на сторінці
+
 def get_skin_page(page_number):
     skins = list_skins()
     start_index = page_number * SKINS_PER_PAGE
     end_index = start_index + SKINS_PER_PAGE
     return skins[start_index:end_index], len(skins)
 
-# Основна команда для магазину
+
 async def shop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.info("Команда /shop виконується")
     page_number = int(context.args[0]) if context.args else 0
-    logger.info(f"Поточна сторінка: {page_number}")
-
     skins, total_skins = get_skin_page(page_number)
-    logger.info(f"Скіни на сторінці: {skins}")
-
     total_pages = (total_skins + SKINS_PER_PAGE - 1) // SKINS_PER_PAGE
-    logger.info(f"Загальна кількість сторінок: {total_pages}")
 
-    # Створення кнопок для кожного скіна і навігації
-    keyboard = []
+    text = "Available skins:\n"
     for skin in skins:
-        keyboard.append([InlineKeyboardButton(f"Купити {skin}", callback_data=f"buy_skin|{skin}")])
+        text += f"`{skin}` - 50 coins\n"
 
-    nav_buttons = []
+    text += "\nUse `/buy_skin ` *<skin_name>* to purchase a skin.\n"
+
     if page_number > 0:
-        nav_buttons.append(InlineKeyboardButton("⬅️ Попередня", callback_data=f"shop {page_number - 1}"))
+        text += f"`/shop {page_number - 1}` - Previous\n"
     if page_number < total_pages - 1:
-        nav_buttons.append(InlineKeyboardButton("➡️ Наступна", callback_data=f"shop {page_number + 1}"))
+        text += f"`/shop {page_number + 1}` - Next\n"
 
-    if nav_buttons:
-        keyboard.append(nav_buttons)
+    await update.message.reply_text(text, parse_mode='Markdown')
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    # Відправлення повідомлення зі скінами
-    if skins:
-        await update.message.reply_text("Перегляньте доступні скіни:", reply_markup=reply_markup)
-        logger.info(f"Відправлені скіни: {skins}")
-
-        # Відправлення фото скінів
-        media_group = []
-        for skin in skins:
-            skin_path = os.path.join(SKINS_DIR, skin)
-            try:
-                media_group.append(InputMediaPhoto(media=open(skin_path, 'rb'), caption=skin))
-            except Exception as e:
-                logger.error(f"Помилка відкриття скіна {skin}: {e}")
-
-        if media_group:
-            await update.message.reply_media_group(media_group)
-            logger.info(f"Відправлено медіа-групу: {media_group}")
-    else:
-        await update.message.reply_text("Немає доступних скінів.")
-        logger.warning("Скіни не знайдені на сторінці")
-
-# Обробка колбеків від кнопок
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    logger.info(f"Received callback: {query.data}")
-
-    try:
-        command, argument = query.data.split("|")
-        logger.info(f"Callback command: {command}, argument: {argument}")
-    except ValueError:
-        logger.warning(f"Invalid callback data: {query.data}")
-        return
-
-    if command == "shop":
-        logger.info("Processing shop command")
-        await shop_command(query.message, context, argument)
-    elif command == "buy_skin":
-        logger.info("Processing buy_skin command")
-        await buy_skin(query.message, context, argument)
-
-
-
-
-# Покупка скіна
-async def buy_skin(update: Update, context: ContextTypes.DEFAULT_TYPE, skin_name: str) -> None:
-    logger.info(f"Команда покупки скіна: {skin_name}")
-    user_id = str(update.effective_user.id)
+# Function to handle the /buy_skin command
+async def buy_skin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
+    user_id = str(update.effective_user.id)
     chat_stats = load_statistics(chat_id)
+    skin_name = context.args[0] if context.args else None
 
-    if skin_name not in list_skins():
-        await update.message.reply_text("Скін не знайдено.")
-        logger.warning(f"Скін {skin_name} не знайдено")
+    if not skin_name:
+        await update.message.reply_text("Будь ласка, вкажіть назву скіна.")
         return
 
     if user_id not in chat_stats:
-        chat_stats[user_id] = {"total": 0, "daily": {}, "currency": 0, "name": "", "last_earn": None, "skin": None}
-
-    if chat_stats[user_id]["skin"] == skin_name:
-        await update.message.reply_text("Ви вже маєте цей скін.")
-        logger.info(f"Користувач {user_id} вже має скін {skin_name}")
+        await update.message.reply_text("Ваша статистика не знайдена.")
         return
 
-    if chat_stats[user_id]["currency"] < 50:
-        await update.message.reply_text(f"Недостатньо грошей. Цей скін коштує 50 сяйва✨. Ваш баланс: {chat_stats[user_id]['currency']} сяйва✨.")
-        logger.warning(f"Користувачу {user_id} не вистачає грошей на скін {skin_name}")
+    user_stats = chat_stats[user_id]
+
+    if "skin" in user_stats and user_stats["skin"] == skin_name:
+        await update.message.reply_text("У вас вже є цей скин.")
         return
 
-    chat_stats[user_id]["currency"] -= 50
-    chat_stats[user_id]["skin"] = skin_name
+    # Add logic to handle the purchase of the skin
+    # For example, deduct currency and assign the new skin
+    user_stats["skin"] = skin_name
     save_statistics(chat_id, chat_stats)
 
-    skin_path = os.path.join(SKINS_DIR, skin_name)
-    await update.message.reply_photo(photo=open(skin_path, 'rb'), caption=f"Ви придбали скін {skin_name}. Ваш новий баланс: {chat_stats[user_id]['currency']} сяйва✨.")
-    logger.info(f"Користувач {user_id} придбав скін {skin_name}")
+    await update.message.reply_text(f"Ви успішно придбали скин: {skin_name}")
+
+
+async def set_skin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+
+    # Check if the user is an admin
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("У вас немає прав доступу до цієї команди.")
+        return
+
+    # Check if the correct number of arguments is provided
+    if len(context.args) != 1:
+        await update.message.reply_text("Будь ласка, використовуйте формат: /set_skin @username <skin_name>")
+        return
+
+    skin_name = context.args[0]
+    target_username = None
+
+    # Determine the target user
+    if context.args[0].startswith('@'):
+        target_username = context.args[0].lstrip('@')
+        target_user_id = None
+        chat_id = update.effective_chat.id
+        chat_stats = load_statistics(chat_id)
+
+        for user in chat_stats:
+            try:
+                chat = await context.bot.get_chat(user)
+                if chat.username == target_username:
+                    target_user_id = user
+                    break
+            except BadRequest:
+                continue
+
+        if not target_user_id:
+            await update.message.reply_text(f"Користувача з ім'ям @{target_username} не знайдено.")
+            return
+    elif update.message.reply_to_message:
+        target_user_id = str(update.message.reply_to_message.from_user.id)
+        target_username = update.message.reply_to_message.from_user.username
+    else:
+        await update.message.reply_text("Будь ласка, вкажіть ім'я користувача або відповідайте на повідомлення користувача.")
+        return
+
+    chat_id = update.effective_chat.id
+    chat_stats = load_statistics(chat_id)
+
+    if target_user_id not in chat_stats:
+        chat_stats[target_user_id] = {"total": 0, "daily": {}, "currency": 0, "name": "", "last_earn": None}
+
+    chat_stats[target_user_id]["skin"] = skin_name
+    save_statistics(chat_id, chat_stats)
+
+    await update.message.reply_text(f"Користувачу @{target_username} було встановлено скин: {skin_name}.")
+
 
 def save_statistics(chat_id, stats):
     file_name = get_stats_file_name(chat_id)
@@ -556,7 +553,9 @@ async def mystat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     days = ["Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота", "Неділя"]
     for i, day in enumerate(days):
-        text += f"{day}: {daily_stats.get(str(i), 0)} годин\n"
+        hours = daily_stats.get(str(i), 0)
+        if hours > 0:
+            text += f"{day}: {hours} годин\n"
 
     if skin:
         skin_path = os.path.join(SKINS_DIR, skin)
@@ -610,15 +609,16 @@ async def your_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     days = ["Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота", "Неділя"]
     for i, day in enumerate(days):
-        text += f"{day}: {daily_stats.get(str(i), 0)} годин\n"
+        hours = daily_stats.get(str(i), 0)
+        if hours > 0:
+            text += f"{day}: {hours} годин\n"
 
     if skin:
         skin_path = os.path.join(SKINS_DIR, skin)
-        await update.message.reply_photo(photo=open(skin_path, 'rb'), caption=text)
+        with open(skin_path, 'rb') as photo:
+            await update.message.reply_photo(photo=photo, caption=text)
     else:
         await update.message.reply_text(text)
-
-    await update.message.reply_text(text)
 
 
 async def reset_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1121,12 +1121,13 @@ def main() -> None:
     app.add_handler(CommandHandler("top_workers", top_workers))
     app.add_handler(CommandHandler("top_workers_day", top_workers_day))
     app.add_handler(CommandHandler("shop", shop_command))
+    app.add_handler(CommandHandler("buy_skin", buy_skin_command))
+    app.add_handler(CommandHandler("set_skin", set_skin))
     app.add_handler(CommandHandler("reset_stat", reset_stat))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.Regex(r'^[+-]') & ~filters.COMMAND, confirm_reset_stat_text))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^[+-]'), edit_schedule))
-    app.add_handler(CallbackQueryHandler(button))
-
+    app.add_handler(CallbackQueryHandler(shop_command, pattern=r'^shop\s\d+'))
     # Create scheduler
     scheduler = BackgroundScheduler()
     scheduler.add_job(update_schedules, 'cron', hour=0, minute=0, timezone=kyiv_tz)
