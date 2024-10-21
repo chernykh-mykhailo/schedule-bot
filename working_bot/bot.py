@@ -27,6 +27,7 @@ from config import TELEGRAM_TOKEN  # Імпорт токену з конфігу
 from config import ADMIN_IDS  # Імпорт списку з айдішками адмінів
 
 LOCK_FILE = 'bot.lock'
+kyiv_tz = pytz.timezone('Europe/Kiev')
 
 
 def create_lock():
@@ -79,6 +80,10 @@ def format_name(name):
     return f"{first_emoji}{clean_name}".strip() if first_emoji else clean_name.strip()
 
 
+def get_user_name(stats, chat, user_id):
+    return stats.get("name", format_name(chat.first_name) or format_name(chat.last_name) or chat.username)
+
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
@@ -102,7 +107,6 @@ def load_schedule(chat_id, schedule_type, weekday_default, weekend_default):
         with open(file_name, 'r', encoding='utf-8') as f:
             return json.load(f)
     else:
-        kyiv_tz = pytz.timezone('Europe/Kiev')
         today = datetime.now(kyiv_tz).weekday()
         if today < 5:
             schedule = weekday_default
@@ -196,24 +200,134 @@ async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = str(update.effective_user.id)
     chat_stats = load_statistics(chat_id)
 
+    if user_id == 1087968824:
+        await update.message.reply_text("Анонімні адміністратори не можуть використовувати цю команду.")
+        return
+
     if user_id not in chat_stats:
         chat_stats[user_id] = {"total": 0, "daily": {}, "currency": 0, "name": "", "last_earn": None}
 
     last_earn = chat_stats[user_id].get("last_earn")
-    now = datetime.datetime.now()
+    now = datetime.now(kyiv_tz)
 
     if last_earn:
-        last_earn_time = datetime.datetime.strptime(last_earn, "%Y-%m-%d %H:%M:%S")
-        if (now - last_earn_time).days < 1:
-            await update.message.reply_text("Ви вже заробили монети сьогодні. Спробуйте знову завтра.")
+        last_earn_date = datetime.strptime(last_earn, "%Y-%m-%d %H:%M:%S").astimezone(kyiv_tz).date()
+        if last_earn_date == now.date():
+            next_earn_time = datetime.combine(now.date() + timedelta(days=1), datetime.min.time(), kyiv_tz)
+            remaining_time = next_earn_time - now
+            hours, remainder = divmod(remaining_time.seconds, 3600)
+            minutes, _ = divmod(remainder, 60)
+            await update.message.reply_text(f"Ви вже заробили сяйво✨ сьогодні. Спробуйте знову через {hours} годин і {minutes} хвилин.")
             return
 
-    earned_currency = random.randint(1, 100)
+
+    # Calculate the total hours worked yesterday
+    yesterday = (now - timedelta(days=1)).weekday()
+    hours_worked_yesterday = chat_stats[user_id]["daily"].get(str(yesterday), 0)
+
+    # Introduce randomness in the currency awarded
+    random_multiplier = random.uniform(0.7, 1.5)  # Random multiplier between 0.5 and 1.5
+    earned_currency = int(hours_worked_yesterday * 10 * random_multiplier)
     chat_stats[user_id]["currency"] += earned_currency
     chat_stats[user_id]["last_earn"] = now.strftime("%Y-%m-%d %H:%M:%S")
 
     save_statistics(chat_id, chat_stats)
-    await update.message.reply_text(f"Ви заробили {earned_currency} монет. Загальний баланс: {chat_stats[user_id]['currency']} монет.")
+    await update.message.reply_text(f"Ви заробили {earned_currency} сяйва✨ за {hours_worked_yesterday} годин роботи вчора. Загальний баланс: {chat_stats[user_id]['currency']} сяйва✨.")
+
+
+async def add_money(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+
+    # Check if the user is an admin
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("У вас немає прав доступу до цієї команди.")
+        return
+
+    # Check if the correct number of arguments is provided
+    if len(context.args) != 2:
+        await update.message.reply_text("Будь ласка, використовуйте формат: /add_money @username <amount>")
+        return
+
+    target_username = context.args[0].lstrip('@')
+    try:
+        amount = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("Будь ласка, введіть правильну кількість сяйва✨.")
+        return
+
+    chat_id = update.effective_chat.id
+    chat_stats = load_statistics(chat_id)
+
+    # Find the target user ID by username
+    target_user_id = None
+    for user in chat_stats:
+        try:
+            chat = await context.bot.get_chat(user)
+            if chat.username == target_username:
+                target_user_id = user
+                break
+        except BadRequest:
+            continue
+
+    if not target_user_id:
+        await update.message.reply_text(f"Користувача з ім'ям @{target_username} не знайдено.")
+        return
+
+    if target_user_id not in chat_stats:
+        chat_stats[target_user_id] = {"total": 0, "daily": {}, "currency": 0, "name": "", "last_earn": None}
+
+    chat_stats[target_user_id]["currency"] += amount
+    save_statistics(chat_id, chat_stats)
+
+    await update.message.reply_text(f"Користувачу @{target_username} було додано {amount} сяйва✨. Новий баланс: {chat_stats[target_user_id]['currency']} сяйва✨.")
+
+
+async def setmoney(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+
+    # Check if the user is an admin
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("У вас немає прав доступу до цієї команди.")
+        return
+
+    # Check if the correct number of arguments is provided
+    if len(context.args) != 2:
+        await update.message.reply_text("Будь ласка, використовуйте формат: /setmoney @username <amount>")
+        return
+
+    target_username = context.args[0].lstrip('@')
+    try:
+        amount = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("Будь ласка, введіть правильну кількість сяйва✨.")
+        return
+
+    chat_id = update.effective_chat.id
+    chat_stats = load_statistics(chat_id)
+
+    # Find the target user ID by username
+    target_user_id = None
+    for user in chat_stats:
+        try:
+            chat = await context.bot.get_chat(user)
+            if chat.username == target_username:
+                target_user_id = user
+                break
+        except BadRequest:
+            continue
+
+    if not target_user_id:
+        await update.message.reply_text(f"Користувача з ім'ям @{target_username} не знайдено.")
+        return
+
+    if target_user_id not in chat_stats:
+        chat_stats[target_user_id] = {"total": 0, "daily": {}, "currency": 0, "name": "", "last_earn": None}
+
+    chat_stats[target_user_id]["currency"] = amount
+    save_statistics(chat_id, chat_stats)
+
+    await update.message.reply_text(f"Користувачу @{target_username} було встановлено {amount} сяйва✨. Новий баланс: {chat_stats[target_user_id]['currency']} сяйва✨.")
+
 
 async def setname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
@@ -231,6 +345,10 @@ async def setname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text("Ім'я не повинно бути довше за 20 символів.")
             return
 
+        if len(custom_name) < 3:
+            await update.message.reply_text("Ім'я не повинно бути меншим за 3 символи.")
+            return
+
         # Check if the name does not contain spaces
         if ' ' in custom_name:
             await update.message.reply_text("Ім'я не повинно містити пробілів.")
@@ -244,14 +362,14 @@ async def setname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         # Check if the user has enough currency
         if chat_stats[user_id]["currency"] < 100:
-            await update.message.reply_text(f"Недостатньо грошей, ваш баланс: {chat_stats[user_id]['currency']} монет.")
+            await update.message.reply_text(f"Недостатньо грошей, ваш баланс: {chat_stats[user_id]['currency']} сяйва✨.")
             return
 
         # Deduct 100 currency units
         chat_stats[user_id]["currency"] -= 100
         chat_stats[user_id]["name"] = custom_name
         save_statistics(chat_id, chat_stats)
-        await update.message.reply_text(f"Ваше ім'я було змінено на {custom_name}. Ваш новий баланс: {chat_stats[user_id]['currency']} монет.")
+        await update.message.reply_text(f"Ваше ім'я було змінено на {custom_name}. Ваш новий баланс: {chat_stats[user_id]['currency']} сяйва✨.")
     else:
         await update.message.reply_text("Будь ласка, введіть ім'я після команди /setname.")
 
@@ -265,19 +383,27 @@ def save_statistics(chat_id, stats):
         logging.error(f"Failed to save statistics: {file_name}, Error: {e}")
 
 
-async def stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def all_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     chat_stats = load_statistics(chat_id)
 
-    text = "Статистика чату:\n"
+    user_stats_summary = {}
+
     for user_id, stats in chat_stats.items():
         try:
             chat = await context.bot.get_chat(user_id)
-            user_name = chat_stats.get(user_id, {}).get("name", update.effective_user.first_name or update.effective_user.username) or "unknown"
+            user_name = get_user_name(stats, chat, user_id)
+            # Update the name in the statistics if it has changed
         except BadRequest:
-            user_name = "unknown"
+            user_name = f"unknown: {user_id}"
 
-        text += f"{user_name}: {stats.get('total', 0)} годин\n"
+        if user_name not in user_stats_summary:
+            user_stats_summary[user_name] = 0
+        user_stats_summary[user_name] += stats.get('total', 0)
+
+    text = "Статистика чату:\n"
+    for user_name, total_hours in user_stats_summary.items():
+        text += f"{user_name}: {total_hours} годин\n"
 
     await update.message.reply_text(text)
 
@@ -296,7 +422,7 @@ async def mystat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     daily_stats = user_stats.get('daily', {})
     balance = user_stats.get('currency', 0)
 
-    text = f"Ваша статистика:\nЗагалом: {total_hours} годин\nБаланс: {balance} монет\n\n"
+    text = f"Ваша статистика:\nЗагалом: {total_hours} годин\nБаланс: {balance} сяйва✨\n\n"
     text += "Статистика по дням тижня:\n"
 
     # Якщо для дня немає даних, повертається 0 годин
@@ -310,39 +436,44 @@ async def mystat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def your_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = context.args
-    if not args:
-        await stat(update, context)
-        return
     user_id = update.effective_user.id
 
     if user_id not in ADMIN_IDS:
         await update.message.reply_text("У вас немає прав доступу до цієї команди.")
         return
 
-    username = args[0].lstrip('@')
+    if args:
+        username = args[0].lstrip('@')
+    elif update.message.reply_to_message:
+        target_user = update.message.reply_to_message.from_user
+        username = target_user.username
+    else:
+        await update.message.reply_text("Будь ласка, вкажіть @username або відповідайте на повідомлення користувача.")
+        return
+
     chat_id = update.effective_chat.id
     chat_stats = load_statistics(chat_id)
 
-    user_id = None
+    target_user_id = None
     for user in chat_stats:
         try:
             chat = await context.bot.get_chat(user)
             if chat.username == username:
-                user_id = user
+                target_user_id = user
                 break
         except BadRequest:
             continue
 
-    if not user_id or user_id not in chat_stats:
+    if not target_user_id or target_user_id not in chat_stats:
         await update.message.reply_text(f"У користувача @{username} немає статистики.")
         return
 
-    user_stats = chat_stats[user_id]
+    user_stats = chat_stats[target_user_id]
     total_hours = user_stats.get('total', 0)
     daily_stats = user_stats.get('daily', {})
     balance = user_stats.get('currency', 0)
 
-    text = f"Статистика користувача @{username}:\nЗагалом: {total_hours} годин\nБаланс: {balance} монет\n\n"
+    text = f"Статистика користувача @{username}:\nЗагалом: {total_hours} годин\nБаланс: {balance} сяйва✨\n\n"
     text += "Статистика по дням тижня:\n"
 
     days = ["Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота", "Неділя"]
@@ -352,8 +483,96 @@ async def your_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(text)
 
 
+async def reset_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("У вас немає прав доступу до цієї команди.")
+        return
+
+    chat_id = update.effective_chat.id
+    chat_stats = load_statistics(chat_id)
+
+    if context.args:
+        target_username = context.args[0].lstrip('@')
+        target_user_id = None
+        for user in chat_stats:
+            try:
+                chat = await context.bot.get_chat(user)
+                if chat.username == target_username:
+                    target_user_id = user
+                    break
+            except BadRequest:
+                continue
+
+        if target_user_id:
+            confirmation_message = await update.message.reply_text(f"Ви впевнені, що хочете скинути статистику користувача @{target_username}? Відповідайте 'так' для підтвердження.")
+            confirmation = await context.bot.wait_for_message(chat_id=update.effective_chat.id, from_user=update.effective_user.id, timeout=30)
+
+            if confirmation and confirmation.text.lower() == 'так':
+                chat_stats[target_user_id] = {"total": 0, "daily": {}, "currency": 0, "name": "", "last_earn": None}
+                save_statistics(chat_id, chat_stats)
+                await update.message.reply_text(f"Статистика користувача @{target_username} була скинута.")
+            else:
+                await update.message.reply_text("Скидання статистики скасовано.")
+        else:
+            await update.message.reply_text(f"Користувача з ім'ям @{target_username} не знайдено.")
+
+
+async def top_earners(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    chat_stats = load_statistics(chat_id)
+
+    top_users = sorted(chat_stats.items(), key=lambda x: x[1].get('currency', 0), reverse=True)[:10]
+    text = "Топ користувачів за кількістю сяйва✨:\n"
+    for user_id, stats in top_users:
+        chat = await context.bot.get_chat(user_id)
+        user_name = get_user_name(stats, chat, user_id)
+        currency = stats.get('currency', 0)
+        text += f"{user_name}: {currency} сяйва✨\n"
+
+    await update.message.reply_text(text)
+
+
+async def top_workers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    chat_stats = load_statistics(chat_id)
+
+    top_users = sorted(chat_stats.items(), key=lambda x: x[1].get('total', 0), reverse=True)[:10]
+    text = "Топ користувачів за загальною кількістю годин:\n"
+    for user_id, stats in top_users:
+        chat = await context.bot.get_chat(user_id)
+        user_name = get_user_name(stats, chat, user_id)
+        total_hours = stats.get('total', 0)
+        text += f"{user_name}: {total_hours} годин\n"
+
+    await update.message.reply_text(text)
+
+
+async def top_workers_day(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    chat_stats = load_statistics(chat_id)
+
+    now = datetime.now(kyiv_tz)
+    yesterday = (now - timedelta(days=1)).weekday()
+
+    top_users = []
+    for user_id, stats in chat_stats.items():
+        total_day_hours = stats.get('daily', {}).get(str(yesterday), 0)
+        chat = await context.bot.get_chat(user_id)
+        user_name = get_user_name(stats, chat, user_id)
+        top_users.append((user_id, total_day_hours))
+
+    top_users = sorted(top_users, key=lambda x: x[1], reverse=True)[:10]
+    text = "Топ користувачів за кількістю годин за вчорашній день:\n"
+    for user_id, total_day_hours in top_users:
+        user_name = chat_stats[user_id].get("name") or get_user_name(chat_stats[user_id], await context.bot.get_chat(user_id), user_id)
+        text += f"{user_name}: {total_day_hours} годин\n"
+
+    await update.message.reply_text(text)
+
+
 def update_schedules():
-    kyiv_tz = pytz.timezone('Europe/Kiev')
     today_date = datetime.now(kyiv_tz)
     tomorrow_date = today_date + timedelta(days=1)
     previos_date = today_date - timedelta(days=1)
@@ -472,7 +691,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logging.info(f"Starting conversation with user: {user.first_name}")
     await update.message.reply_text(
         "Вітаємо! Використовуйте команди /today для сьогоднішнього графіка, "
-        "/tomorrow для завтрашнього, та /default для стандартного графіка.")
+        "/tomorrow для завтрашнього, та /default для стандартного графіка."
+        "Для додаткової інформації використовуйте команду /help.")
 
 
 async def mechanical_update_schedules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -491,11 +711,13 @@ async def show_today_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE
     text = await get_schedule_text(today_schedule, datetime.now(pytz.timezone('Europe/Kiev')).strftime("%d.%m.%Y"), context, update)
     await update.message.reply_text(text)
 
+
 async def show_tomorrow_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     tomorrow_schedule = load_schedule(chat_id, "tomorrow", empty_weekday, empty_weekend)
     text = await get_schedule_text(tomorrow_schedule, (datetime.now(pytz.timezone('Europe/Kiev')) + timedelta(days=1)).strftime("%d.%m.%Y"), context, update)
     await update.message.reply_text(text)
+
 
 async def show_default_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
@@ -695,6 +917,31 @@ async def leave_username(update: Update, context):
     await update.message.reply_text(response)
 
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = (
+        "Доступні команди:\n"
+        "/start - Почати розмову з ботом\n"
+        "/today - Показати сьогоднішній графік\n"
+        "/tomorrow - Показати завтрашній графік\n"
+        "/default - Показати стандартний графік\n"
+        "/stat - Показати статистику чату\n"
+        "/mystat - Показати вашу статистику\n"
+        "/earn - Заробити сяйво✨ за вчорашню роботу\n"
+        "/setname - Встановити ваше ім'я\n"
+        "/top_earners - Показати топ користувачів за кількістю сяйва✨\n"
+        "/top_workers - Показати топ користувачів за кількістю годин\n"
+        "/top_workers_day - Показати топ користувачів за кількістю годин за вчорашній день\n"
+        "\n"
+        "Для адмінів\n"
+        "/reset_stat - Скинути статистику користувача\n"
+        "/your_stat - Показати статистику іншого користувача\n"
+        "/add_money - Додати сяйво✨ іншому користувачу\n"
+        "/setmoney - Встановити кількість сяйва✨ для користувача\n"
+
+    )
+    await update.message.reply_text(text)
+
+
 def main() -> None:
     signal.signal(signal.SIGINT, signal_handler)  # Handle signal
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -708,16 +955,22 @@ def main() -> None:
     app.add_handler(CommandHandler("update", mechanical_update_schedules))
     app.add_handler(CommandHandler("leavethisgroup", leave_username))
     app.add_handler(CommandHandler("leave", leave))
-    app.add_handler(CommandHandler("stat", stat))
+    app.add_handler(CommandHandler("stat", all_stat))
     app.add_handler(CommandHandler("mystat", mystat))
     app.add_handler(CommandHandler("your_stat", your_stat))
     app.add_handler(CommandHandler("earn", earn))
     app.add_handler(CommandHandler("setname", setname))
+    app.add_handler(CommandHandler("add_money", add_money))
+    app.add_handler(CommandHandler("setmoney", setmoney))
+    app.add_handler(CommandHandler("top_earners", top_earners))
+    app.add_handler(CommandHandler("top_workers", top_workers))
+    app.add_handler(CommandHandler("top_workers_day", top_workers_day))
+    app.add_handler(CommandHandler("reset_stat", reset_stat))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, edit_schedule))
 
     # Create scheduler
     scheduler = BackgroundScheduler()
-    kyiv_tz = pytz.timezone('Europe/Kiev')
     scheduler.add_job(update_schedules, 'cron', hour=0, minute=0, timezone=kyiv_tz)
     scheduler.start()
 
