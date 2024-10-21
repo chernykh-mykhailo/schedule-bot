@@ -493,6 +493,7 @@ async def reset_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     chat_id = update.effective_chat.id
     chat_stats = load_statistics(chat_id)
 
+    target_user_id = None
     if context.args:
         target_username = context.args[0].lstrip('@')
         target_user_id = None
@@ -504,19 +505,35 @@ async def reset_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                     break
             except BadRequest:
                 continue
+    elif update.message.reply_to_message:
+        target_user_id = str(update.message.reply_to_message.from_user.id)
 
-        if target_user_id:
-            confirmation_message = await update.message.reply_text(f"Ви впевнені, що хочете скинути статистику користувача @{target_username}? Відповідайте 'так' для підтвердження.")
-            confirmation = await context.bot.wait_for_message(chat_id=update.effective_chat.id, from_user=update.effective_user.id, timeout=30)
+    if target_user_id and target_user_id in chat_stats:
+        context.user_data['reset_stat_target'] = target_user_id
+        await update.message.reply_text(f"Ви впевнені, що хочете скинути статистику користувача з ID {target_user_id}? Відповідайте 'так' або 'ні'.")
+    else:
+        await update.message.reply_text("Користувача не знайдено. Будь ласка, вкажіть @username, ID користувача або відповідайте на повідомлення користувача.")
 
-            if confirmation and confirmation.text.lower() == 'так':
-                chat_stats[target_user_id] = {"total": 0, "daily": {}, "currency": 0, "name": "", "last_earn": None}
-                save_statistics(chat_id, chat_stats)
-                await update.message.reply_text(f"Статистика користувача @{target_username} була скинута.")
-            else:
-                await update.message.reply_text("Скидання статистики скасовано.")
+
+async def confirm_reset_stat_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_response = update.message.text.lower()
+    if 'reset_stat_target' not in context.user_data:
+        return
+
+    if user_response == 'так':
+        chat_id = update.effective_chat.id
+        target_user_id = context.user_data.pop('reset_stat_target')
+
+        chat_stats = load_statistics(chat_id)
+        if target_user_id in chat_stats:
+            chat_stats[target_user_id] = {"total": 0, "daily": {}, "currency": 0, "name": "", "last_earn": None}
+            save_statistics(chat_id, chat_stats)
+            await update.message.reply_text(f"Статистика користувача з ID {target_user_id} була скинута.")
         else:
-            await update.message.reply_text(f"Користувача з ім'ям @{target_username} не знайдено.")
+            await update.message.reply_text("Користувача не знайдено.")
+    else:
+        context.user_data.pop('reset_stat_target')
+        await update.message.reply_text("Скидання статистики скасовано.")
 
 
 async def top_earners(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -966,8 +983,9 @@ def main() -> None:
     app.add_handler(CommandHandler("top_workers", top_workers))
     app.add_handler(CommandHandler("top_workers_day", top_workers_day))
     app.add_handler(CommandHandler("reset_stat", reset_stat))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.Regex(r'^[+-]') & ~filters.COMMAND, confirm_reset_stat_text))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, edit_schedule))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^[+-]'), edit_schedule))
 
     # Create scheduler
     scheduler = BackgroundScheduler()
