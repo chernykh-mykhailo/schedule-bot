@@ -132,9 +132,10 @@ def load_schedule(chat_id, schedule_type, weekday_default, weekend_default):
 
 def save_schedule(chat_id, schedule_type, schedule):
     file_name = get_schedule_file_name(chat_id, schedule_type)
+    sorted_schedule = dict(sorted(schedule.items(), key=lambda x: (x[0] == '00:00 - 01:00', x[0])))
     try:
         with open(file_name, 'w', encoding='utf-8') as f:
-            json.dump(schedule, f, ensure_ascii=False, indent=4)
+            json.dump(sorted_schedule, f, ensure_ascii=False, indent=4)
         logging.info(f"Schedule saved successfully: {file_name}")
     except Exception as e:
         logging.error(f"Failed to save schedule: {file_name}, Error: {e}")
@@ -230,7 +231,7 @@ async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     hours_worked_yesterday = chat_stats[user_id]["daily"].get(str(yesterday), 0)
 
     # Introduce randomness in the currency awarded
-    random_multiplier = random.uniform(0.7, 1.5)  # Random multiplier between 0.5 and 1.5
+    random_multiplier = random.uniform(0.7, 1.5)
     earned_currency = int(hours_worked_yesterday * 10 * random_multiplier)
     chat_stats[user_id]["currency"] += earned_currency
     chat_stats[user_id]["last_earn"] = now.strftime("%Y-%m-%d %H:%M:%S")
@@ -239,7 +240,7 @@ async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"Ви заробили {earned_currency} сяйва✨ за {hours_worked_yesterday} годин роботи вчора. Загальний баланс: {chat_stats[user_id]['currency']} сяйва✨.")
 
 
-async def add_money(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def add_money_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
 
     # Check if the user is an admin
@@ -286,7 +287,7 @@ async def add_money(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"Користувачу @{target_username} було додано {amount} сяйва✨. Новий баланс: {chat_stats[target_user_id]['currency']} сяйва✨.")
 
 
-async def setmoney(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def set_money_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
 
     # Check if the user is an admin
@@ -333,7 +334,7 @@ async def setmoney(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"Користувачу @{target_username} було встановлено {amount} сяйва✨. Новий баланс: {chat_stats[target_user_id]['currency']} сяйва✨.")
 
 
-async def setname(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def set_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user_id = str(update.effective_user.id)
     chat_stats = load_statistics(chat_id)
@@ -404,7 +405,7 @@ async def shop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     text = "Available skins:\n"
     for skin in skins:
-        text += f"`{skin}` - 50 coins\n"
+        text += f"`{skin}` - 50 сяйва \n"
 
     text += "\nUse `/buy_skin ` *<skin_name>* to purchase a skin.\n"
 
@@ -415,12 +416,15 @@ async def shop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     await update.message.reply_text(text, parse_mode='Markdown')
 
-# Function to handle the /buy_skin command
+
+
 async def buy_skin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user_id = str(update.effective_user.id)
     chat_stats = load_statistics(chat_id)
     skin_name = context.args[0] if context.args else None
+
+
 
     if not skin_name:
         await update.message.reply_text("Будь ласка, вкажіть назву скіна.")
@@ -429,6 +433,14 @@ async def buy_skin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if user_id not in chat_stats:
         await update.message.reply_text("Ваша статистика не знайдена.")
         return
+
+    # Check if the skin exists
+    available_skins = list_skins()
+    if skin_name not in available_skins:
+        await update.message.reply_text("Скін не знайдено. Будь ласка, виберіть інший скін.")
+        return
+
+        # Deduct currency and assign the new skin
 
     user_stats = chat_stats[user_id]
 
@@ -444,7 +456,7 @@ async def buy_skin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update.message.reply_text(f"Ви успішно придбали скин: {skin_name}")
 
 
-async def set_skin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def set_skin_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
 
     # Check if the user is an admin
@@ -458,6 +470,10 @@ async def set_skin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     skin_name = context.args[0]
+    available_skins = list_skins()
+    if skin_name not in available_skins:
+        await update.message.reply_text("Скін не знайдено. Будь ласка, виберіть інший скін.")
+        return
     target_username = None
 
     # Determine the target user
@@ -533,7 +549,7 @@ async def all_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(text)
 
 
-async def mystat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def my_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user_id = str(update.effective_user.id)
     chat_stats = load_statistics(chat_id)
@@ -621,7 +637,7 @@ async def your_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(text)
 
 
-async def reset_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def reset_stat_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
 
     if user_id not in ADMIN_IDS:
@@ -648,7 +664,7 @@ async def reset_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     if target_user_id and target_user_id in chat_stats:
         context.user_data['reset_stat_target'] = target_user_id
-        await update.message.reply_text(f"Ви впевнені, що хочете скинути статистику користувача з ID {target_user_id}? Відповідайте 'так' або 'ні'.")
+        await update.message.reply_text(f"Ви впевнені, що хочете скинути статистику користувача {target_user_id}? Відповідайте 'так' або 'ні'.")
     else:
         await update.message.reply_text("Користувача не знайдено. Будь ласка, вкажіть @username, ID користувача або відповідайте на повідомлення користувача.")
 
@@ -659,9 +675,8 @@ async def confirm_reset_stat_text(update: Update, context: ContextTypes.DEFAULT_
         return
 
     if user_response == 'так':
-        chat_id = update.effective_chat.id
         target_user_id = context.user_data.pop('reset_stat_target')
-
+        chat_id = update.effective_chat.id
         chat_stats = load_statistics(chat_id)
         if target_user_id in chat_stats:
             chat_stats[target_user_id] = {"total": 0, "daily": {}, "currency": 0, "name": "", "last_earn": None}
@@ -850,7 +865,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Для додаткової інформації використовуйте команду /help.")
 
 
-async def mechanical_update_schedules(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def mechanical_update_schedules_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
 
     if user_id not in ADMIN_IDS:
@@ -907,7 +922,6 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not (message.startswith('+') or message.startswith('-')):
         return
     if not update.message:
-        # If there is no message, return early
         return
 
     user_id = update.effective_user.id
@@ -944,6 +958,15 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     operation = 'remove' if message[0] == '-' else 'add'
     hours_range = message[1:].strip()
 
+    add_remove_hours = False
+    if hours_range.endswith('!'):
+        hours_range = hours_range[:-1].strip()
+        if user_id in ADMIN_IDS:
+            add_remove_hours = True
+        else:
+            await update.message.reply_text("У вас немає прав доступу до цієї команди.")
+            return
+
     updated_hours = []
     if '-' in hours_range:
         try:
@@ -965,12 +988,19 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     time_slot = f"{hour:02d}:00 - {hour + 1:02d}:00"
 
                 if operation == 'add':
+                    if add_remove_hours and time_slot not in schedule:
+                        schedule[time_slot] = []
                     if user_id not in schedule[time_slot]:
                         schedule[time_slot].append(user_id)
                         updated_hours.append(time_slot)
+
                 elif operation == 'remove':
-                    if user_id in schedule[time_slot]:
+                    if add_remove_hours and time_slot in schedule:
+                        del schedule[time_slot]
+                    if time_slot in schedule and user_id in schedule[time_slot]:
                         schedule[time_slot].remove(user_id)
+                        if not schedule[time_slot]:  # Remove the time slot if it is empty
+                            del schedule[time_slot]
                         updated_hours.append(time_slot)
         except ValueError:
             await update.message.reply_text("Будь ласка, введіть правильний час (9-24).")
@@ -987,8 +1017,8 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
             time_slot = f"{hour:02d}:00 - {hour + 1:02d}:00"
 
-            if hour == 23:
-                time_slot = f"{hour:02d}:00 - 00:00"
+            if add_remove_hours and time_slot not in schedule:
+                schedule[time_slot] = []
 
             if operation == 'add':
                 if user_id not in schedule[time_slot]:
@@ -997,6 +1027,8 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             elif operation == 'remove':
                 if user_id in schedule[time_slot]:
                     schedule[time_slot].remove(user_id)
+                    if not schedule[time_slot]:  # Remove the time slot if it is empty
+                        del schedule[time_slot]
                     updated_hours.append(time_slot)
         except ValueError:
             await update.message.reply_text("Будь ласка, введіть правильний час (9-24).")
@@ -1031,10 +1063,11 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     else:
         date_label = "незнайомий графік"
 
-    updated_schedule_message = f"Графік роботи Адміністраторів на {date_label}\n\n"
-    for time_slot in schedule:
-        users = schedule[time_slot]
+    # Sort the schedule by time slots, keeping '00:00 - 01:00' at the end
+    sorted_schedule = sorted(schedule.items(), key=lambda x: (x[0] == '00:00 - 01:00', x[0]))
 
+    updated_schedule_message = f"Графік роботи Адміністраторів на {date_label}\n\n"
+    for time_slot, users in sorted_schedule:
         user_names = []
         for user_id in users:
             user_id = str(user_id)
@@ -1060,7 +1093,6 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("Не вдалося редагувати повідомлення. Спробуйте ще раз.")
         print(e)
 
-
 async def leave(update: Update, context):
     response = random.choice(responses_easy)
     await update.message.reply_text(response)
@@ -1075,24 +1107,27 @@ async def leave_username(update: Update, context):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (
         "Доступні команди:\n"
-        "/start - Почати розмову з ботом\n"
+        "+h-h - у ВІДПОВІДЬ на графік. Додати себе до графіка на години від x до y, наприклад: +9-12 або -9-12\n"
         "/today - Показати сьогоднішній графік\n"
         "/tomorrow - Показати завтрашній графік\n"
         "/default - Показати стандартний графік\n"
         "/stat - Показати статистику чату\n"
-        "/mystat - Показати вашу статистику\n"
+        "/my_stat - Показати вашу статистику\n"
         "/earn - Заробити сяйво✨ за вчорашню роботу\n"
-        "/setname - Встановити ваше ім'я\n"
+        "/set_name - Встановити ваше ім'я\n"
         "/top_earners - Показати топ користувачів за кількістю сяйва✨\n"
         "/top_workers - Показати топ користувачів за кількістю годин\n"
         "/top_workers_day - Показати топ користувачів за кількістю годин за вчорашній день\n"
+        "/shop - Показати магазин скинів\n"
+        "/buy_skin - Придбати скин\n"
+        "/help - Показати це повідомлення\n"
         "\n"
         "Для адмінів\n"
         "/reset_stat - Скинути статистику користувача\n"
         "/your_stat - Показати статистику іншого користувача\n"
         "/add_money - Додати сяйво✨ іншому користувачу\n"
-        "/setmoney - Встановити кількість сяйва✨ для користувача\n"
-
+        "/set_money - Встановити кількість сяйва✨ для користувача\n"
+        "/set_skin - Встановити скин для користувача\n"
     )
     await update.message.reply_text(text)
 
@@ -1107,24 +1142,24 @@ def main() -> None:
     app.add_handler(CommandHandler("default", show_default_schedule))
     app.add_handler(CommandHandler("weekday", show_weekday_default_schedule))
     app.add_handler(CommandHandler("weekend", show_weekend_default_schedule))
-    app.add_handler(CommandHandler("update", mechanical_update_schedules))
+    app.add_handler(CommandHandler("update", mechanical_update_schedules_admin))
     app.add_handler(CommandHandler("leavethisgroup", leave_username))
     app.add_handler(CommandHandler("leave", leave))
     app.add_handler(CommandHandler("stat", all_stat))
-    app.add_handler(CommandHandler("mystat", mystat))
+    app.add_handler(CommandHandler("my_stat", my_stat))
     app.add_handler(CommandHandler("your_stat", your_stat))
     app.add_handler(CommandHandler("earn", earn))
-    app.add_handler(CommandHandler("setname", setname))
-    app.add_handler(CommandHandler("add_money", add_money))
-    app.add_handler(CommandHandler("setmoney", setmoney))
+    app.add_handler(CommandHandler("set_name", set_name))
+    app.add_handler(CommandHandler("add_money", add_money_admin))
+    app.add_handler(CommandHandler("set_money", set_money_admin))
     app.add_handler(CommandHandler("top_earners", top_earners))
     app.add_handler(CommandHandler("top_workers", top_workers))
     app.add_handler(CommandHandler("top_workers_day", top_workers_day))
     app.add_handler(CommandHandler("shop", shop_command))
     app.add_handler(CommandHandler("buy_skin", buy_skin_command))
-    app.add_handler(CommandHandler("set_skin", set_skin))
-    app.add_handler(CommandHandler("reset_stat", reset_stat))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.Regex(r'^[+-]') & ~filters.COMMAND, confirm_reset_stat_text))
+    app.add_handler(CommandHandler("set_skin", set_skin_admin))
+    app.add_handler(CommandHandler("reset_stat", reset_stat_admin))
+    app.add_handler(MessageHandler(filters.Regex(r'^(так|ні)$') & ~filters.COMMAND, confirm_reset_stat_text))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^[+-]'), edit_schedule))
     app.add_handler(CallbackQueryHandler(shop_command, pattern=r'^shop\s\d+'))
