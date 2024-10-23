@@ -405,9 +405,10 @@ async def shop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     text = "Available skins:\n"
     for skin in skins:
-        text += f"`{skin}` - 50 сяйва \n"
+        text += f"`{skin}` - 100 сяйва \n"
 
     text += "\nUse `/buy_skin ` *<skin_name>* to purchase a skin.\n"
+    text += "\nUse `/preview_skin ` *<skin_name>* to preview.\n"
 
     if page_number > 0:
         text += f"`/shop {page_number - 1}` - Previous\n"
@@ -417,14 +418,11 @@ async def shop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(text, parse_mode='Markdown')
 
 
-
 async def buy_skin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user_id = str(update.effective_user.id)
     chat_stats = load_statistics(chat_id)
     skin_name = context.args[0] if context.args else None
-
-
 
     if not skin_name:
         await update.message.reply_text("Будь ласка, вкажіть назву скіна.")
@@ -434,27 +432,42 @@ async def buy_skin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text("Ваша статистика не знайдена.")
         return
 
-    # Check if the skin exists
     available_skins = list_skins()
     if skin_name not in available_skins:
         await update.message.reply_text("Скін не знайдено. Будь ласка, виберіть інший скін.")
         return
 
         # Deduct currency and assign the new skin
+        # Check if the user has enough currency
+    if chat_stats[user_id]["currency"] < 100:
+        await update.message.reply_text(f"Недостатньо грошей, ваш баланс: {chat_stats[user_id]['currency']} сяйва✨.")
+        return
 
+        # Deduct 100 currency units
     user_stats = chat_stats[user_id]
-
     if "skin" in user_stats and user_stats["skin"] == skin_name:
         await update.message.reply_text("У вас вже є цей скин.")
         return
-
     # Add logic to handle the purchase of the skin
     # For example, deduct currency and assign the new skin
+    user_stats["currency"] -= 100
     user_stats["skin"] = skin_name
     save_statistics(chat_id, chat_stats)
 
-    await update.message.reply_text(f"Ви успішно придбали скин: {skin_name}")
+    await update.message.reply_text(f"Ви успішно придбали скин: {skin_name}. Ваш новий баланс: {chat_stats[user_id]['currency']} сяйва✨.")
 
+async def preview_skin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text("Use `/preview_skin ` *<skin_name>* for preview")
+        return
+
+    skin_name = ' '.join(context.args)
+    skin_image_path = os.path.join(SKINS_DIR, f"{skin_name}")
+
+    if os.path.exists(skin_image_path):
+        await update.message.reply_photo(photo=open(skin_image_path, 'rb'), caption=f"Прев'ю скіна: {skin_name}")
+    else:
+        await update.message.reply_text(f"Скін з назвою `{skin_name}` не знайдено.", parse_mode='Markdown')
 
 async def set_skin_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -958,14 +971,11 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     operation = 'remove' if message[0] == '-' else 'add'
     hours_range = message[1:].strip()
 
-    add_remove_hours = False
-    if hours_range.endswith('!'):
+    add_hours = hours_range.endswith('!') and operation == 'add'
+    remove_hours = hours_range.endswith('!') and operation == 'remove' and user_id in ADMIN_IDS
+
+    if add_hours or remove_hours:
         hours_range = hours_range[:-1].strip()
-        if user_id in ADMIN_IDS:
-            add_remove_hours = True
-        else:
-            await update.message.reply_text("У вас немає прав доступу до цієї команди.")
-            return
 
     updated_hours = []
     if '-' in hours_range:
@@ -988,19 +998,17 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     time_slot = f"{hour:02d}:00 - {hour + 1:02d}:00"
 
                 if operation == 'add':
-                    if add_remove_hours and time_slot not in schedule:
+                    if add_hours and time_slot not in schedule:
                         schedule[time_slot] = []
                     if user_id not in schedule[time_slot]:
                         schedule[time_slot].append(user_id)
                         updated_hours.append(time_slot)
 
                 elif operation == 'remove':
-                    if add_remove_hours and time_slot in schedule:
+                    if remove_hours and time_slot in schedule:
                         del schedule[time_slot]
                     if time_slot in schedule and user_id in schedule[time_slot]:
                         schedule[time_slot].remove(user_id)
-                        if not schedule[time_slot]:  # Remove the time slot if it is empty
-                            del schedule[time_slot]
                         updated_hours.append(time_slot)
         except ValueError:
             await update.message.reply_text("Будь ласка, введіть правильний час (9-24).")
@@ -1017,7 +1025,7 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
             time_slot = f"{hour:02d}:00 - {hour + 1:02d}:00"
 
-            if add_remove_hours and time_slot not in schedule:
+            if add_hours and time_slot not in schedule:
                 schedule[time_slot] = []
 
             if operation == 'add':
@@ -1025,10 +1033,10 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     schedule[time_slot].append(user_id)
                     updated_hours.append(time_slot)
             elif operation == 'remove':
-                if user_id in schedule[time_slot]:
+                if remove_hours and time_slot in schedule:
+                    del schedule[time_slot]
+                if time_slot in schedule and user_id in schedule[time_slot]:
                     schedule[time_slot].remove(user_id)
-                    if not schedule[time_slot]:  # Remove the time slot if it is empty
-                        del schedule[time_slot]
                     updated_hours.append(time_slot)
         except ValueError:
             await update.message.reply_text("Будь ласка, введіть правильний час (9-24).")
@@ -1157,6 +1165,7 @@ def main() -> None:
     app.add_handler(CommandHandler("top_workers_day", top_workers_day))
     app.add_handler(CommandHandler("shop", shop_command))
     app.add_handler(CommandHandler("buy_skin", buy_skin_command))
+    app.add_handler(CommandHandler("preview_skin", preview_skin_command))
     app.add_handler(CommandHandler("set_skin", set_skin_admin))
     app.add_handler(CommandHandler("reset_stat", reset_stat_admin))
     app.add_handler(MessageHandler(filters.Regex(r'^(так|ні)$') & ~filters.COMMAND, confirm_reset_stat_text))
