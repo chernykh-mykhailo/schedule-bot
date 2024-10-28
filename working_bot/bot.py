@@ -1106,7 +1106,7 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     message = update.message.text.strip()
     chat_id = update.effective_chat.id
 
-    if not (message.startswith('+') or message.startswith('-')) or not update.message:
+    if not update.message:
         return
 
     user_id = update.effective_user.id
@@ -1136,63 +1136,82 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     schedule = load_schedule(chat_id, schedule_type, empty_weekday, empty_weekend)
-    operation = 'remove' if message[0] == '-' else 'add'
-    hours_range = message[1:].strip().rstrip('!')
-    add_hours = message.endswith('!') and operation == 'add'
-    remove_hours = message.endswith('!') and operation == 'remove' and user_id in ADMIN_IDS
-
+    operations = message.split(',')
     updated_hours = []
-    try:
-        if '-' in hours_range:
-            start_time, end_time = hours_range.split('-')
-            start_hour = int(start_time.split(':')[0])
-            end_hour = int(end_time.split(':')[0])
-            if start_hour < 0 or end_hour > 24 or start_hour >= end_hour:
-                raise ValueError
-            for hour in range(start_hour, end_hour):
+    invalid_hours = []
+    op_type = None  # Initialize op_type
+
+    for operation in operations:
+        operation = operation.strip()
+        if not (operation.startswith('+') or operation.startswith('-')):
+            continue
+
+        op_type = 'remove' if operation[0] == '-' else 'add'
+        hours_range = operation[1:].strip().rstrip('!')
+        add_hours = operation.endswith('!') and op_type == 'add'
+        remove_hours = operation.endswith('!') and op_type == 'remove' and user_id in ADMIN_IDS
+
+        try:
+            if '-' in hours_range:
+                start_time, end_time = hours_range.split('-')
+                start_hour = int(start_time.split(':')[0])
+                end_hour = int(end_time.split(':')[0])
+                if start_hour < 0 or end_hour > 24 or start_hour >= end_hour:
+                    raise ValueError
+                for hour in range(start_hour, end_hour):
+                    time_slot = f"{hour % 24:02d}:00 - {(hour + 1) % 24:02d}:00"
+                    if op_type == 'add':
+                        if add_hours and time_slot not in schedule:
+                            schedule[time_slot] = []
+                        if user_id not in schedule[time_slot]:
+                            schedule[time_slot].append(user_id)
+                            updated_hours.append(time_slot)
+                    elif op_type == 'remove':
+                        if remove_hours and time_slot in schedule:
+                            del schedule[time_slot]
+                        if time_slot in schedule and user_id in schedule[time_slot]:
+                            schedule[time_slot].remove(user_id)
+                            updated_hours.append(time_slot)
+            else:
+                hour = int(hours_range.split(':')[0])
+                if hour < 0 or hour > 24:
+                    raise ValueError
                 time_slot = f"{hour % 24:02d}:00 - {(hour + 1) % 24:02d}:00"
-                if operation == 'add':
+                if op_type == 'add':
                     if add_hours and time_slot not in schedule:
                         schedule[time_slot] = []
                     if user_id not in schedule[time_slot]:
                         schedule[time_slot].append(user_id)
                         updated_hours.append(time_slot)
-                elif operation == 'remove':
+                elif op_type == 'remove':
                     if remove_hours and time_slot in schedule:
                         del schedule[time_slot]
                     if time_slot in schedule and user_id in schedule[time_slot]:
                         schedule[time_slot].remove(user_id)
                         updated_hours.append(time_slot)
-        else:
-            hour = int(hours_range.split(':')[0])
-            if hour < 0 or hour > 24:
-                raise ValueError
-            time_slot = f"{hour % 24:02d}:00 - {(hour + 1) % 24:02d}:00"
-            if operation == 'add':
-                if add_hours and time_slot not in schedule:
-                    schedule[time_slot] = []
-                if user_id not in schedule[time_slot]:
-                    schedule[time_slot].append(user_id)
-                    updated_hours.append(time_slot)
-            elif operation == 'remove':
-                if remove_hours and time_slot in schedule:
-                    del schedule[time_slot]
-                if time_slot in schedule and user_id in schedule[time_slot]:
-                    schedule[time_slot].remove(user_id)
-                    updated_hours.append(time_slot)
-    except ValueError:
-        await update.message.reply_text(f"Будь ласка, введіть правильний час (0-24). Для додавання неіснуючої години використовуйте !, наприклад: {message}!")
-        return
+        except ValueError:
+            invalid_hours.append(operation)
+        except KeyError:
+            await update.message.reply_text(
+                f"Будь ласка, введіть правильний час(від 0 до 24). "
+                f"Для {'додавання' if op_type == 'add' else 'видалення'} неіснуючої години використовуйте ! "
+                f"в кінці, наприклад: {'+' if op_type == 'add' else '-'}{hours_range}!"
+            )
+            return
 
     save_schedule(chat_id, schedule_type, schedule)
 
     if updated_hours:
         start_time = updated_hours[0].split('-')[0]
         end_time = updated_hours[-1].split('-')[1]
-        response_message = f"{user_name} було {'додано до' if operation == 'add' else 'видалено з'} графіка на {start_time} - {end_time}."
+        response_message = f"{user_name} було {'додано до' if op_type == 'add' else 'видалено з'} графіка на {start_time} - {end_time}."
     else:
-        response_message = f"Не вдалося {'додати години' if operation == 'add' else 'видалити години'}."
+        response_message = f"Не вдалося {'додати години' if op_type == 'add' else 'видалити години'}."
 
+    if invalid_hours:
+        await update.message.reply_text(
+            f"Будь ласка, введіть правильний час(від 0 до 24). "
+        )
     date_label = {
         "today": datetime.now(pytz.timezone('Europe/Kiev')).strftime("%d.%m.%Y"),
         "tomorrow": (datetime.now(pytz.timezone('Europe/Kiev')) + timedelta(days=1)).strftime("%d.%m.%Y"),
@@ -1211,8 +1230,6 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     except Exception as e:
         await update.message.reply_text("Не вдалося редагувати повідомлення. Спробуйте ще раз.")
         print(e)
-
-
 
 async def leave(update: Update, context):
     response = random.choice(responses_easy)
