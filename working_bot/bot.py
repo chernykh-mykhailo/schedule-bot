@@ -3,7 +3,6 @@ import random
 import emoji
 import sys
 import re
-import asyncio
 import copy
 import json
 import logging
@@ -640,31 +639,6 @@ def save_statistics(chat_id, stats):
         logging.error(f"Failed to save statistics: {file_name}, Error: {e}")
 
 
-async def all_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    chat_id = update.effective_chat.id
-    chat_stats = load_statistics(chat_id)
-
-    user_stats_summary = {}
-
-    for user_id, stats in chat_stats.items():
-        try:
-            chat = await context.bot.get_chat(user_id)
-            user_name = get_user_name(chat_stats[user_id], await context.bot.get_chat(user_id))
-            # Update the name in the statistics if it has changed
-        except BadRequest:
-            user_name = f"unknown: {user_id}"
-
-        if user_name not in user_stats_summary:
-            user_stats_summary[user_name] = 0
-        user_stats_summary[user_name] += stats.get('total', 0)
-
-    text = "Статистика чату:\n"
-    for user_name, total_hours in user_stats_summary.items():
-        text += f"{user_name}: {total_hours} годин\n"
-
-    await update.message.reply_text(text)
-
-
 async def get_user_stats_text(user_stats, user_name):
     profile_skin = user_stats.get('profile_skin_skin', None)
     profile_skin_path = os.path.join(PROFILE_SKINS_DIR, profile_skin) if profile_skin else None
@@ -896,6 +870,33 @@ async def top_yesterday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(text)
 
 
+
+async def all_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    chat_stats = load_statistics(chat_id)
+
+    user_stats_summary = {}
+
+    for user_id, stats in chat_stats.items():
+        try:
+            chat = await context.bot.get_chat(user_id)
+            user_name = get_user_name(chat_stats[user_id], await context.bot.get_chat(user_id))
+            # Update the name in the statistics if it has changed
+        except BadRequest:
+            user_name = f"unknown: {user_id}"
+
+        if user_name not in user_stats_summary:
+            user_stats_summary[user_name] = 0
+        user_stats_summary[user_name] += stats.get('total', 0)
+
+    text = "Статистика чату:\n"
+    for user_name, total_hours in user_stats_summary.items():
+        text += f"{user_name}: {total_hours} годин\n"
+
+    await update.message.reply_text(text)
+
+
+
 async def top_workers_weekly(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     chat_stats = load_statistics(chat_id)
@@ -1105,103 +1106,71 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     message = update.message.text.strip()
     chat_id = update.effective_chat.id
 
-    if not (message.startswith('+') or message.startswith('-')):
-        return
-    if not update.message:
+    if not (message.startswith('+') or message.startswith('-')) or not update.message:
         return
 
     user_id = update.effective_user.id
     chat_stats = load_statistics(chat_id)
     user_name = chat_stats.get(user_id, {}).get("name", update.effective_user.first_name or update.effective_user.username)
 
-    if update.message.reply_to_message:
-        reply_text = update.message.reply_to_message.text
-
-        if "Графік роботи Адміністраторів на стандартний графік (будній день)" in reply_text:
-            schedule = load_schedule(chat_id, "weekday_default", empty_weekday, empty_weekend)
-            schedule_type = "weekday_default"
-        elif "Графік роботи Адміністраторів на стандартний графік (вихідний день)" in reply_text:
-            schedule = load_schedule(chat_id, "weekend_default", empty_weekday, empty_weekend)
-            schedule_type = "weekend_default"
-        elif "Графік роботи Адміністраторів на " in reply_text:
-            schedule_date = update.message.reply_to_message.text.split('на ')[1].strip().split()[0]
-            current_date = datetime.now(pytz.timezone('Europe/Kiev')).strftime("%d.%m.%Y")
-            tomorrow_date = (datetime.now(pytz.timezone('Europe/Kiev')) + timedelta(days=1)).strftime("%d.%m.%Y")
-
-            if schedule_date == current_date:
-                schedule = load_schedule(chat_id, "today", empty_weekday, empty_weekend)
-                schedule_type = "today"
-            elif schedule_date == tomorrow_date:
-                schedule = load_schedule(chat_id, "tomorrow", empty_weekday, empty_weekend)
-                schedule_type = "tomorrow"
-            else:
-                return
-        else:
-            return
-    else:
+    if not update.message.reply_to_message:
         return
 
+    reply_text = update.message.reply_to_message.text
+    schedule_type = None
+
+    if "стандартний графік (будній день)" in reply_text:
+        schedule_type = "weekday_default"
+    elif "стандартний графік (вихідний день)" in reply_text:
+        schedule_type = "weekend_default"
+    elif "Графік роботи Адміністраторів на " in reply_text:
+        schedule_date = reply_text.split('на ')[1].strip().split()[0]
+        current_date = datetime.now(pytz.timezone('Europe/Kiev')).strftime("%d.%m.%Y")
+        tomorrow_date = (datetime.now(pytz.timezone('Europe/Kiev')) + timedelta(days=1)).strftime("%d.%m.%Y")
+        if schedule_date == current_date:
+            schedule_type = "today"
+        elif schedule_date == tomorrow_date:
+            schedule_type = "tomorrow"
+
+    if not schedule_type:
+        return
+
+    schedule = load_schedule(chat_id, schedule_type, empty_weekday, empty_weekend)
     operation = 'remove' if message[0] == '-' else 'add'
-    hours_range = message[1:].strip()
-
-    add_hours = hours_range.endswith('!') and operation == 'add'
-    remove_hours = hours_range.endswith('!') and operation == 'remove' and user_id in ADMIN_IDS
-
-    if add_hours or remove_hours:
-        hours_range = hours_range[:-1].strip()
+    hours_range = message[1:].strip().rstrip('!')
+    add_hours = message.endswith('!') and operation == 'add'
+    remove_hours = message.endswith('!') and operation == 'remove' and user_id in ADMIN_IDS
 
     updated_hours = []
-    if '-' in hours_range:
-        try:
-            start_hour, end_hour = map(int, hours_range.split('-'))
-
-            if start_hour < 0:
-                start_hour += 24
-            if end_hour < 0:
-                end_hour += 24
-
+    try:
+        if '-' in hours_range:
+            start_time, end_time = hours_range.split('-')
+            start_hour = int(start_time.split(':')[0])
+            end_hour = int(end_time.split(':')[0])
             if start_hour < 0 or end_hour > 24 or start_hour >= end_hour:
-                await update.message.reply_text("Будь ласка, введіть правильний час (9-24).\n ")
-                return
-
+                raise ValueError
             for hour in range(start_hour, end_hour):
-                if hour == 23:
-                    time_slot = f"{hour:02d}:00 - 00:00"
-                else:
-                    time_slot = f"{hour:02d}:00 - {hour + 1:02d}:00"
-
+                time_slot = f"{hour % 24:02d}:00 - {(hour + 1) % 24:02d}:00"
                 if operation == 'add':
                     if add_hours and time_slot not in schedule:
                         schedule[time_slot] = []
                     if user_id not in schedule[time_slot]:
                         schedule[time_slot].append(user_id)
                         updated_hours.append(time_slot)
-
                 elif operation == 'remove':
                     if remove_hours and time_slot in schedule:
                         del schedule[time_slot]
                     if time_slot in schedule and user_id in schedule[time_slot]:
                         schedule[time_slot].remove(user_id)
                         updated_hours.append(time_slot)
-        except ValueError:
-            await update.message.reply_text("Будь ласка, введіть правильний час (9-24).")
-            return
-    else:
-        try:
-            hour = int(hours_range)
-
-            if hour < 0:
-                hour += 24
-
-            if hour == 24:
-                hour = 0
-
-            time_slot = f"{hour:02d}:00 - {hour + 1:02d}:00"
-
-            if add_hours and time_slot not in schedule:
-                schedule[time_slot] = []
-
+        else:
+            hour = int(hours_range.split(':')[0])
+            if hour < 0 or hour > 24:
+                raise ValueError
+            time_slot = f"{hour % 24:02d}:00 - {(hour + 1) % 24:02d}:00"
             if operation == 'add':
+                if add_hours and time_slot not in schedule:
+                    schedule[time_slot] = []
                 if user_id not in schedule[time_slot]:
                     schedule[time_slot].append(user_id)
                     updated_hours.append(time_slot)
@@ -1211,68 +1180,39 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 if time_slot in schedule and user_id in schedule[time_slot]:
                     schedule[time_slot].remove(user_id)
                     updated_hours.append(time_slot)
-        except ValueError:
-            await update.message.reply_text("Будь ласка, введіть правильний час (9-24).")
-            return
+    except ValueError:
+        await update.message.reply_text(f"Будь ласка, введіть правильний час (0-24). Для додавання неіснуючої години використовуйте !, наприклад: {message}!")
+        return
 
     save_schedule(chat_id, schedule_type, schedule)
 
-    if operation == 'add':
-        if updated_hours:
-            start_time = updated_hours[0].split('-')[0]
-            end_time = updated_hours[-1].split('-')[1]
-            response_message = f"{user_name} було додано до графіка на {start_time} - {end_time}."
-        else:
-            response_message = "Не вдалося додати години."
+    if updated_hours:
+        start_time = updated_hours[0].split('-')[0]
+        end_time = updated_hours[-1].split('-')[1]
+        response_message = f"{user_name} було {'додано до' if operation == 'add' else 'видалено з'} графіка на {start_time} - {end_time}."
     else:
-        if updated_hours:
-            start_time = updated_hours[0].split('-')[0]
-            end_time = updated_hours[-1].split('-')[1]
-            response_message = f"{user_name} було видалено з графіка на {start_time} - {end_time}."
-        else:
-            response_message = "Не вдалося видалити години."
+        response_message = f"Не вдалося {'додати години' if operation == 'add' else 'видалити години'}."
 
-    # Set the correct date label
-    if schedule_type == "today":
-        date_label = datetime.now(pytz.timezone('Europe/Kiev')).strftime("%d.%m.%Y")
-    elif schedule_type == "tomorrow":
-        date_label = (datetime.now(pytz.timezone('Europe/Kiev')) + timedelta(days=1)).strftime("%d.%m.%Y")
-    elif schedule_type == "weekday_default":
-        date_label = "стандартний графік (будній день)"
-    elif schedule_type == "weekend_default":
-        date_label = "стандартний графік (вихідний день)"
-    else:
-        date_label = "незнайомий графік"
+    date_label = {
+        "today": datetime.now(pytz.timezone('Europe/Kiev')).strftime("%d.%m.%Y"),
+        "tomorrow": (datetime.now(pytz.timezone('Europe/Kiev')) + timedelta(days=1)).strftime("%d.%m.%Y"),
+        "weekday_default": "стандартний графік (будній день)",
+        "weekend_default": "стандартний графік (вихідний день)"
+    }.get(schedule_type, "незнайомий графік")
 
-    # Sort the schedule by time slots, keeping '00:00 - 01:00' at the end
     sorted_schedule = sorted(schedule.items(), key=lambda x: (x[0] == '00:00 - 01:00', x[0]))
-
     updated_schedule_message = f"Графік роботи Адміністраторів на {date_label}\n\n"
     for time_slot, users in sorted_schedule:
-        user_names = []
-        for user_id in users:
-            user_id = str(user_id)
-            chat_stats = load_statistics(update.effective_chat.id)
-            if user_id in chat_stats and chat_stats[user_id].get("name"):
-                user_names.append(chat_stats[user_id]["name"])
-            else:
-                try:
-                    chat = await context.bot.get_chat(user_id)
-                    if chat.first_name:
-                        user_names.append(format_name(chat.first_name))
-                    else:
-                        user_names.append("–")
-                except BadRequest:
-                    user_names.append("unknown")
-
-        user_names_str = ' – '.join(user_names) if user_names else "–"
-        updated_schedule_message += f"{time_slot}: {user_names_str}\n"
+        user_names = [chat_stats.get(str(user_id), {}).get("name", "unknown") for user_id in users]
+        updated_schedule_message += f"{time_slot}: {' – '.join(user_names) if user_names else '–'}\n"
 
     try:
         await update.message.reply_to_message.edit_text(updated_schedule_message + '\n' + response_message)
     except Exception as e:
         await update.message.reply_text("Не вдалося редагувати повідомлення. Спробуйте ще раз.")
         print(e)
+
+
 
 async def leave(update: Update, context):
     response = random.choice(responses_easy)
