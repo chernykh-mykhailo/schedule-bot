@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import random
 import emoji
 import sys
@@ -16,7 +17,7 @@ import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, \
     CallbackQueryHandler, CallbackContext
-from telegram.error import BadRequest
+from telegram.error import BadRequest, NetworkError
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from responses import responses_easy, responses_username
@@ -30,11 +31,14 @@ from config import ADMIN_IDS  # Імпорт списку з айдішками 
 LOCK_FILE = 'bot.lock'
 
 SKINS_DIR = "skins"
+PROFILE_SKINS_DIR = "skins/profile_skins"
+KISS_SKINS_DIR = "skins/kiss_skins"
+HUG_SKINS_DIR = "skins/hug_skins"
+DANCE_SKINS_DIR = "skins/dance_skins"
+
 SKINS_PER_PAGE = 5
 
 kyiv_tz = pytz.timezone('Europe/Kiev')
-
-
 
 # Імена файлів для графіків
 SCHEDULES_DIR = "schedules"
@@ -97,8 +101,21 @@ def format_name(name):
     return f"{first_emoji}{clean_name}".strip() if first_emoji else clean_name.strip()
 
 
-def get_user_name(stats, chat, user_id):
-    return stats.get("name", format_name(chat.first_name) or format_name(chat.last_name) or chat.username)
+def get_user_name(stats, user):
+    # Check if the name is set in the statistics
+    if "name" in stats:
+        return stats["name"]
+
+    # Check if the first name is longer than 3 characters
+    if user.first_name and len(user.first_name) > 3:
+        return format_name(user.first_name)
+
+    # Use the username if available
+    if user.username:
+        return user.username
+
+    # Fallback to user ID
+    return str(user.id)
 
 
 logging.basicConfig(
@@ -107,6 +124,13 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def error_handler(update: Update, context: CallbackContext) -> None:
+    logging.error(msg="Exception while handling an update:", exc_info=context.error)
+    if isinstance(context.error, NetworkError):
+        await update.message.reply_text("Network error occurred. Please try again later.")
+
 
 
 def get_schedule_file_name(chat_id, schedule_type):
@@ -227,8 +251,7 @@ async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
     # Calculate the total hours worked yesterday
-    yesterday = (now - timedelta(days=1)).weekday()
-    hours_worked_yesterday = chat_stats[user_id]["daily"].get(str(yesterday), 0)
+    hours_worked_yesterday = chat_stats[user_id].get("yesterday", 0)
 
     # Introduce randomness in the currency awarded
     random_multiplier = random.uniform(0.7, 1.5)
@@ -379,41 +402,66 @@ async def set_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Будь ласка, введіть ім'я після команди /setname.")
 
 
-def list_skins():
+def list_skins(directory):
     skins = []
     try:
-        for file_name in os.listdir(SKINS_DIR):
+        for file_name in os.listdir(directory):
             if file_name.endswith(('.png', '.jpg', '.jpeg')):
                 skins.append(file_name)
-        logger.info(f"Знайдено скіни: {skins}")
+        logger.info(f"Found skins in {directory}: {skins}")
     except Exception as e:
-        logger.error(f"Помилка при завантаженні скінів: {e}")
+        logger.error(f"Error loading skins from {directory}: {e}")
     return skins
 
 
-def get_skin_page(page_number):
-    skins = list_skins()
+def get_skin_page(category, page_number):
+    if category == "profile":
+        skins = list_skins(PROFILE_SKINS_DIR)
+    elif category == "kiss":
+        skins = list_skins(KISS_SKINS_DIR)
+    elif category == "hug":
+        skins = list_skins(HUG_SKINS_DIR)
+    elif category == "dance":
+        skins = list_skins(DANCE_SKINS_DIR)
+    else:
+        skins = []
+
     start_index = page_number * SKINS_PER_PAGE
     end_index = start_index + SKINS_PER_PAGE
     return skins[start_index:end_index], len(skins)
 
 
+# python
 async def shop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    page_number = int(context.args[0]) if context.args else 0
-    skins, total_skins = get_skin_page(page_number)
+    if not context.args:
+        text = "Please choose a category:\n"
+        text += "`/shop profile` - Skins for profiles\n"
+        text += "`/shop kiss` - Skins for kisses\n"
+        text += "`/shop hug` - Skins for hugs\n"
+        text += "`/shop dance` - Skins for dances\n"
+        await update.message.reply_text(text, parse_mode='Markdown')
+        return
+
+    category = context.args[0].lower()
+    if category not in ["profile", "kiss", "hug", "dance"]:
+        await update.message.reply_text("Invalid category. Please choose from profile, kiss, hug, or dance.")
+        return
+
+    page_number = int(context.args[1]) if len(context.args) > 1 else 0
+    skins, total_skins = get_skin_page(category, page_number)
     total_pages = (total_skins + SKINS_PER_PAGE - 1) // SKINS_PER_PAGE
 
-    text = "Available skins:\n"
+    text = f"Available skins for {category}:\n"
     for skin in skins:
         text += f"`{skin}` - 100 сяйва \n"
 
-    text += "\nUse `/buy_skin ` *<skin_name>* to purchase a skin.\n"
-    text += "\nUse `/preview_skin ` *<skin_name>* to preview.\n"
+    text += "\nUse `/buy_skin `*skin_name* to purchase a skin.\n"
+    text += "Use `/preview_skin `*skin_name* to preview.\n"
 
     if page_number > 0:
-        text += f"`/shop {page_number - 1}` - Previous\n"
+        text += f"`/shop {category} {page_number - 1}` - Previous\n"
     if page_number < total_pages - 1:
-        text += f"`/shop {page_number + 1}` - Next\n"
+        text += f"`/shop {category} {page_number + 1}` - Next\n"
 
     await update.message.reply_text(text, parse_mode='Markdown')
 
@@ -422,52 +470,71 @@ async def buy_skin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     chat_id = update.effective_chat.id
     user_id = str(update.effective_user.id)
     chat_stats = load_statistics(chat_id)
-    skin_name = context.args[0] if context.args else None
-
-    if not skin_name:
-        await update.message.reply_text("Будь ласка, вкажіть назву скіна.")
-        return
 
     if user_id not in chat_stats:
-        await update.message.reply_text("Ваша статистика не знайдена.")
+        await update.message.reply_text("У вас немає статистики.")
         return
 
-    available_skins = list_skins()
-    if skin_name not in available_skins:
-        await update.message.reply_text("Скін не знайдено. Будь ласка, виберіть інший скін.")
+    if len(context.args) != 1:
+        await update.message.reply_text("Будь ласка, використовуйте формат: /buy_skin <назва_скіна>")
         return
 
-        # Deduct currency and assign the new skin
-        # Check if the user has enough currency
-    if chat_stats[user_id]["currency"] < 100:
-        await update.message.reply_text(f"Недостатньо грошей, ваш баланс: {chat_stats[user_id]['currency']} сяйва✨.")
+    skin_name = context.args[0]
+    skin_found = False
+    skin_category = None
+
+    # Check all skin categories
+    for category in ["profile_skins", "kiss_skins", "hug_skins", "dance_skins"]:
+        available_skins = list_skins(os.path.join(SKINS_DIR, category))
+        if skin_name in available_skins:
+            skin_found = True
+            skin_category = category
+            break
+
+    if not skin_found:
+        await update.message.reply_text("Скін не знайдено.")
         return
 
-        # Deduct 100 currency units
     user_stats = chat_stats[user_id]
-    if "skin" in user_stats and user_stats["skin"] == skin_name:
-        await update.message.reply_text("У вас вже є цей скин.")
+    balance = user_stats.get('currency', 0)
+
+    skin_cost = 100
+    if balance < skin_cost:
+        await update.message.reply_text("Недостатньо сяйва✨ для покупки цього скіна.")
         return
-    # Add logic to handle the purchase of the skin
-    # For example, deduct currency and assign the new skin
-    user_stats["currency"] -= 100
-    user_stats["skin"] = skin_name
+
+    user_stats['currency'] -= skin_cost
+    if 'purchased_skins' not in user_stats:
+        user_stats['purchased_skins'] = {}
+    if skin_category not in user_stats['purchased_skins']:
+        user_stats['purchased_skins'][skin_category] = []
+    user_stats['purchased_skins'][skin_category].append(skin_name)
+    user_stats[f'{skin_category[:-1]}_skin'] = skin_name  # Set the last purchased skin as active
     save_statistics(chat_id, chat_stats)
 
-    await update.message.reply_text(f"Ви успішно придбали скин: {skin_name}. Ваш новий баланс: {chat_stats[user_id]['currency']} сяйва✨.")
+    await update.message.reply_text(f"Ви успішно придбали скіна {skin_name} з категорії {skin_category}.")
 
 async def preview_skin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not context.args:
-        await update.message.reply_text("Use `/preview_skin ` *<skin_name>* for preview")
+    if len(context.args) < 1:
+        await update.message.reply_text("Please specify the skin name.")
         return
 
-    skin_name = ' '.join(context.args)
-    skin_image_path = os.path.join(SKINS_DIR, f"{skin_name}")
+    skin_name = context.args[0]
+    skin_found = False
+    skin_path = ""
 
-    if os.path.exists(skin_image_path):
-        await update.message.reply_photo(photo=open(skin_image_path, 'rb'), caption=f"Прев'ю скіна: {skin_name}")
-    else:
-        await update.message.reply_text(f"Скін з назвою `{skin_name}` не знайдено.", parse_mode='Markdown')
+    # Check all skin categories
+    for root, dirs, files in os.walk(SKINS_DIR):
+        if skin_name in files:
+            skin_found = True
+            skin_path = os.path.join(root, skin_name)
+            break
+
+    if not skin_found:
+        await update.message.reply_text("Skin not found. Please choose another skin.")
+        return
+
+    await update.message.reply_photo(photo=open(skin_path, 'rb'))
 
 async def set_skin_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -478,53 +545,89 @@ async def set_skin_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     # Check if the correct number of arguments is provided
-    if len(context.args) != 1:
-        await update.message.reply_text("Будь ласка, використовуйте формат: /set_skin @username <skin_name>")
+    if len(context.args) != 3:
+        await update.message.reply_text("Будь ласка, використовуйте формат: /set_skin @username <category> <skin_name>")
         return
 
-    skin_name = context.args[0]
-    available_skins = list_skins()
+    target_username = context.args[0].lstrip('@')
+    category = context.args[1].lower()
+    skin_name = context.args[2]
+
+    available_skins = list_skins(os.path.join(SKINS_DIR, f"{category}_skins"))
     if skin_name not in available_skins:
         await update.message.reply_text("Скін не знайдено. Будь ласка, виберіть інший скін.")
-        return
-    target_username = None
-
-    # Determine the target user
-    if context.args[0].startswith('@'):
-        target_username = context.args[0].lstrip('@')
-        target_user_id = None
-        chat_id = update.effective_chat.id
-        chat_stats = load_statistics(chat_id)
-
-        for user in chat_stats:
-            try:
-                chat = await context.bot.get_chat(user)
-                if chat.username == target_username:
-                    target_user_id = user
-                    break
-            except BadRequest:
-                continue
-
-        if not target_user_id:
-            await update.message.reply_text(f"Користувача з ім'ям @{target_username} не знайдено.")
-            return
-    elif update.message.reply_to_message:
-        target_user_id = str(update.message.reply_to_message.from_user.id)
-        target_username = update.message.reply_to_message.from_user.username
-    else:
-        await update.message.reply_text("Будь ласка, вкажіть ім'я користувача або відповідайте на повідомлення користувача.")
         return
 
     chat_id = update.effective_chat.id
     chat_stats = load_statistics(chat_id)
 
+    # Find the target user ID by username
+    target_user_id = None
+    for user in chat_stats:
+        try:
+            chat = await context.bot.get_chat(user)
+            if chat.username == target_username:
+                target_user_id = user
+                break
+        except BadRequest:
+            continue
+
+    if not target_user_id:
+        await update.message.reply_text(f"Користувача з ім'ям @{target_username} не знайдено.")
+        return
+
     if target_user_id not in chat_stats:
         chat_stats[target_user_id] = {"total": 0, "daily": {}, "currency": 0, "name": "", "last_earn": None}
 
-    chat_stats[target_user_id]["skin"] = skin_name
+    if category == "profile_skins":
+        chat_stats[target_user_id]["skin"] = skin_name
+    else:
+        chat_stats[target_user_id][f"{category}_skin"] = skin_name
+
     save_statistics(chat_id, chat_stats)
 
-    await update.message.reply_text(f"Користувачу @{target_username} було встановлено скин: {skin_name}.")
+    await update.message.reply_text(f"Користувачу @{target_username} було встановлено скин: {skin_name} для категорії {category}.")
+
+
+async def change_skin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    user_id = str(update.effective_user.id)
+    chat_stats = load_statistics(chat_id)
+
+    if user_id not in chat_stats:
+        await update.message.reply_text("У вас немає статистики.")
+        return
+
+    if len(context.args) != 1:
+        await update.message.reply_text("Будь ласка, використовуйте формат: /change_skin <назва_скіна>")
+        return
+
+    skin_name = context.args[0]
+    category = None
+
+    # Determine the category of the skin
+    for cat in ["profile_skins", "kiss_skins", "hug_skins", "dance_skins"]:
+        if skin_name in list_skins(os.path.join(SKINS_DIR, cat)):
+            category = cat
+            break
+
+    if not category:
+        await update.message.reply_text("Скін не знайдено. Будь ласка, виберіть інший скін.")
+        return
+
+    user_stats = chat_stats[user_id]
+    if ('purchased_skins' not in user_stats or category not in user_stats['purchased_skins']
+            or skin_name not in user_stats['purchased_skins'][category]):
+        await update.message.reply_text("У вас немає придбаних скінів у цій категорії.")
+        return
+
+    purchased_skins = user_stats['purchased_skins'][category]
+
+    skin = skin_name
+    user_stats[f'{category[:-1]}_skin'] = skin  # Set the selected skin as active
+    save_statistics(chat_id, chat_stats)
+
+    await update.message.reply_text(f"Ви успішно змінили активний скін на {skin} з категорії {category}.")
 
 
 def save_statistics(chat_id, stats):
@@ -546,7 +649,7 @@ async def all_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     for user_id, stats in chat_stats.items():
         try:
             chat = await context.bot.get_chat(user_id)
-            user_name = get_user_name(stats, chat, user_id)
+            user_name = get_user_name(chat_stats[user_id], await context.bot.get_chat(user_id))
             # Update the name in the statistics if it has changed
         except BadRequest:
             user_name = f"unknown: {user_id}"
@@ -562,33 +665,51 @@ async def all_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(text)
 
 
+async def get_user_stats_text(user_stats, user_name):
+    profile_skin = user_stats.get('profile_skin_skin', None)
+    profile_skin_path = os.path.join(PROFILE_SKINS_DIR, profile_skin) if profile_skin else None
+
+    text = f"Статистика користувача {user_name}:\n"
+    if user_stats.get("total", 0) > 0:
+        text += f"Загалом: {user_stats['total']} годин\n"
+    if user_stats.get("currency", 0) > 0:
+        text += f"Баланс: {user_stats['currency']} сяйва✨\n"
+    if user_stats.get("gender", "не встановлено") != "не встановлено":
+        text += f"Стать: {user_stats['gender']}\n"
+    if user_stats.get("hugs", 0) > 0:
+        text += f"Обійми: {user_stats['hugs']}\n"
+    if user_stats.get("kisses", 0) > 0:
+        text += f"Поцілунки: {user_stats['kisses']}\n"
+
+    text += "\nСтатистика по дням тижня:\n"
+    days_of_week = ["Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота", "Неділя"]
+    for day, hours in user_stats.get("daily", {}).items():
+        if hours > 0:
+            text += f"{days_of_week[int(day)]}: {hours} годин\n"
+
+    text += "\nПридбані скіни:\n"
+    for category, skins in user_stats.get("purchased_skins", {}).items():
+        if skins:
+            text += f"{category.capitalize()}: {', '.join(skins)}\n"
+
+    return text, profile_skin_path
+
+
 async def my_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user_id = str(update.effective_user.id)
     chat_stats = load_statistics(chat_id)
 
     if user_id not in chat_stats:
-        await update.message.reply_text("У вас немає статистики.")
+        await update.message.reply_text("Ваша статистика не знайдена.")
         return
 
     user_stats = chat_stats[user_id]
-    total_hours = user_stats.get('total', 0)
-    daily_stats = user_stats.get('daily', {})
-    balance = user_stats.get('currency', 0)
-    skin = user_stats.get('skin', None)
+    user_name = get_user_name(user_stats, update.effective_user)
+    text, profile_skin_path = await get_user_stats_text(user_stats, user_name)
 
-    text = f"Ваша статистика:\nЗагалом: {total_hours} годин\nБаланс: {balance} сяйва✨\n\n"
-    text += "Статистика по дням тижня:\n"
-
-    days = ["Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота", "Неділя"]
-    for i, day in enumerate(days):
-        hours = daily_stats.get(str(i), 0)
-        if hours > 0:
-            text += f"{day}: {hours} годин\n"
-
-    if skin:
-        skin_path = os.path.join(SKINS_DIR, skin)
-        await update.message.reply_photo(photo=open(skin_path, 'rb'), caption=text)
+    if profile_skin_path and os.path.exists(profile_skin_path):
+        await update.message.reply_photo(photo=open(profile_skin_path, 'rb'), caption=text)
     else:
         await update.message.reply_text(text)
 
@@ -628,58 +749,55 @@ async def your_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     user_stats = chat_stats[target_user_id]
-    total_hours = user_stats.get('total', 0)
-    daily_stats = user_stats.get('daily', {})
-    balance = user_stats.get('currency', 0)
-    skin = user_stats.get('skin', None)
+    text, profile_skin_path = await get_user_stats_text(user_stats, f"@{username}")
 
-    text = f"Статистика користувача @{username}:\nЗагалом: {total_hours} годин\nБаланс: {balance} сяйва✨\n\n"
-    text += "Статистика по дням тижня:\n"
-
-    days = ["Понеділок", "Вівторок", "Середа", "Четвер", "П'ятниця", "Субота", "Неділя"]
-    for i, day in enumerate(days):
-        hours = daily_stats.get(str(i), 0)
-        if hours > 0:
-            text += f"{day}: {hours} годин\n"
-
-    if skin:
-        skin_path = os.path.join(SKINS_DIR, skin)
-        with open(skin_path, 'rb') as photo:
-            await update.message.reply_photo(photo=photo, caption=text)
+    if profile_skin_path and os.path.exists(profile_skin_path):
+        await update.message.reply_photo(photo=open(profile_skin_path, 'rb'), caption=text)
     else:
         await update.message.reply_text(text)
+
+
+async def remove_user_from_all_schedules(chat_id, user_id, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if user_id is None:
+        logging.error("User ID is None. Cannot remove user from schedules.")
+        return
+
+    for schedule_type in ['today', 'tomorrow', 'default', 'weekday_default', 'weekend_default']:
+        schedule = load_schedule(chat_id, schedule_type, empty_weekday, empty_weekend)
+        user_removed = False
+        for time_slot, users in schedule.items():
+            if user_id in users:
+                users.remove(user_id)
+                user_removed = True
+                logging.info(f"Removed user {user_id} from {time_slot} in {schedule_type} schedule.")
+        if user_removed:
+            save_schedule(chat_id, schedule_type, schedule)
+            await update.message.reply_text(
+                f"{user_id} видалено з усіх графіків.")
+
+        else:
+            logging.info(f"User {user_id} not found in {schedule_type} schedule.")
 
 
 async def reset_stat_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
 
+    # Check if the user is an admin
     if user_id not in ADMIN_IDS:
         await update.message.reply_text("У вас немає прав доступу до цієї команди.")
         return
 
+    # Check if context.args is None or does not have exactly one argument
+    if context.args is None or len(context.args) != 1:
+        await update.message.reply_text("Будь ласка, використовуйте формат: /reset_stat @username або /reset_stat user_id")
+        return
+
+    target_identifier = context.args[0].lstrip('@')
     chat_id = update.effective_chat.id
-    chat_stats = load_statistics(chat_id)
 
-    target_user_id = None
-    if context.args:
-        target_username = context.args[0].lstrip('@')
-        target_user_id = None
-        for user in chat_stats:
-            try:
-                chat = await context.bot.get_chat(user)
-                if chat.username == target_username:
-                    target_user_id = user
-                    break
-            except BadRequest:
-                continue
-    elif update.message.reply_to_message:
-        target_user_id = str(update.message.reply_to_message.from_user.id)
-
-    if target_user_id and target_user_id in chat_stats:
-        context.user_data['reset_stat_target'] = target_user_id
-        await update.message.reply_text(f"Ви впевнені, що хочете скинути статистику користувача {target_user_id}? Відповідайте 'так' або 'ні'.")
-    else:
-        await update.message.reply_text("Користувача не знайдено. Будь ласка, вкажіть @username, ID користувача або відповідайте на повідомлення користувача.")
+    # Store the target identifier in user_data for later use
+    context.user_data['reset_stat_target'] = target_identifier
+    await update.message.reply_text(f"Ви впевнені, що хочете скинути статистику для {target_identifier}? Напишіть 'так' або 'ні'.")
 
 
 async def confirm_reset_stat_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -687,16 +805,36 @@ async def confirm_reset_stat_text(update: Update, context: ContextTypes.DEFAULT_
     if 'reset_stat_target' not in context.user_data:
         return
 
+    target_identifier = context.user_data.pop('reset_stat_target')
+    chat_id = update.effective_chat.id
+    chat_stats = load_statistics(chat_id)
+
     if user_response == 'так':
-        target_user_id = context.user_data.pop('reset_stat_target')
-        chat_id = update.effective_chat.id
-        chat_stats = load_statistics(chat_id)
-        if target_user_id in chat_stats:
-            chat_stats[target_user_id] = {"total": 0, "daily": {}, "currency": 0, "name": "", "last_earn": None}
-            save_statistics(chat_id, chat_stats)
-            await update.message.reply_text(f"Статистика користувача з ID {target_user_id} була скинута.")
+        # Determine if the identifier is a user ID or username
+        if target_identifier.isdigit():
+            target_user_id = int(target_identifier)
         else:
-            await update.message.reply_text("Користувача не знайдено.")
+            target_user_id = None
+            for user in chat_stats:
+                try:
+                    chat = await context.bot.get_chat(user)
+                    if chat.username == target_identifier:
+                        target_user_id = user
+                        break
+                except BadRequest:
+                    continue
+        # Remove user from all schedules
+        await remove_user_from_all_schedules(chat_id, target_user_id, update, context)
+
+        if not target_user_id or target_user_id not in chat_stats:
+            await update.message.reply_text(f"Статистика користувача з ідентифікатором {target_identifier} не знайдена.")
+            return
+
+        # Remove user from statistics
+        del chat_stats[target_user_id]
+        save_statistics(chat_id, chat_stats)
+
+        await update.message.reply_text(f"Статистика користувача з ідентифікатором {target_identifier} була скинута.")
     else:
         context.user_data.pop('reset_stat_target')
         await update.message.reply_text("Скидання статистики скасовано.")
@@ -710,7 +848,7 @@ async def top_earners(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     text = "Топ користувачів за кількістю сяйва✨:\n"
     for user_id, stats in top_users:
         chat = await context.bot.get_chat(user_id)
-        user_name = get_user_name(stats, chat, user_id)
+        user_name = get_user_name(stats, chat)
         currency = stats.get('currency', 0)
         text += f"{user_name}: {currency} сяйва✨\n"
 
@@ -725,34 +863,62 @@ async def top_workers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     text = "Топ користувачів за загальною кількістю годин:\n"
     for user_id, stats in top_users:
         chat = await context.bot.get_chat(user_id)
-        user_name = get_user_name(stats, chat, user_id)
+        user_name = get_user_name(stats, chat)
         total_hours = stats.get('total', 0)
         text += f"{user_name}: {total_hours} годин\n"
 
     await update.message.reply_text(text)
 
 
-async def top_workers_day(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def top_yesterday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     chat_stats = load_statistics(chat_id)
 
-    now = datetime.now(kyiv_tz)
-    yesterday = (now - timedelta(days=1)).weekday()
-
     top_users = []
     for user_id, stats in chat_stats.items():
-        total_day_hours = stats.get('daily', {}).get(str(yesterday), 0)
-        chat = await context.bot.get_chat(user_id)
-        user_name = get_user_name(stats, chat, user_id)
-        top_users.append((user_id, total_day_hours))
+        total_day_hours = stats.get('yesterday', 0)
+        try:
+            chat = await context.bot.get_chat(user_id)
+            user_name = get_user_name(stats, chat)
+            top_users.append((user_id, total_day_hours))
+        except BadRequest as e:
+            logging.error(f"Failed to get chat for user_id {user_id}: {e}")
 
     top_users = sorted(top_users, key=lambda x: x[1], reverse=True)[:10]
     text = "Топ користувачів за кількістю годин за вчорашній день:\n"
     for user_id, total_day_hours in top_users:
-        user_name = chat_stats[user_id].get("name") or get_user_name(chat_stats[user_id], await context.bot.get_chat(user_id), user_id)
-        text += f"{user_name}: {total_day_hours} годин\n"
+        try:
+            user_name = get_user_name(chat_stats[user_id], await context.bot.get_chat(user_id))
+            text += f"{user_name}: {total_day_hours} годин\n"
+        except BadRequest as e:
+            logging.error(f"Failed to get chat for user_id {user_id}: {e}")
 
     await update.message.reply_text(text)
+
+
+async def top_workers_weekly(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    chat_stats = load_statistics(chat_id)
+
+    if not chat_stats:
+        await update.message.reply_text("Немає статистики для цього чату.")
+        return
+
+    # Calculate weekly hours for all users
+    weekly_stats = {}
+    for user_id, stats in chat_stats.items():
+        weekly_hours = sum(stats.get('daily', {}).values())
+        weekly_stats[user_id] = weekly_hours
+
+    # Sort users by weekly hours
+    top_users = sorted(weekly_stats.items(), key=lambda x: x[1], reverse=True)[:5]
+
+    text = "*Топ користувачів за тиждень:*\n"
+    for rank, (user_id, hours) in enumerate(top_users, 1):
+        user_name = chat_stats[user_id].get('name', f"User {user_id}")
+        text += f"{rank}. {user_name}: *{hours}* годин\n"
+
+    await update.message.reply_text(text, parse_mode='Markdown')
 
 
 def update_schedules():
@@ -779,11 +945,15 @@ def update_schedules():
             # Load previous statistics for the chat
             chat_stats = load_statistics(chat_id)
 
+            # Reset yesterday's hours for all users
+            for user_id in chat_stats:
+                chat_stats[user_id]['yesterday'] = 0
+
             # Update total hours worked for each user
             for user_id, hours in today_stats.items():
                 # Initialize user statistics if not already present
                 if user_id not in chat_stats:
-                    chat_stats[user_id] = {"total": 0, "daily": {}}
+                    chat_stats[user_id] = {"total": 0, "daily": {}, "yesterday": 0}
 
                 chat_stats[user_id]["total"] += hours
 
@@ -795,6 +965,9 @@ def update_schedules():
                 else:
                     daily_stats[str(weekday)] += hours
                 chat_stats[user_id]['daily'] = daily_stats
+
+                # Update yesterday's hours
+                chat_stats[user_id]['yesterday'] = hours
 
             # Save updated statistics for the chat
             save_statistics(chat_id, chat_stats)
@@ -1112,23 +1285,169 @@ async def leave_username(update: Update, context):
     await update.message.reply_text(response)
 
 
+async def hug_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    chat_stats = load_statistics(chat_id)
+
+    command_text = update.message.text.lower()
+    target_username = command_text.split(" ", 1)[1].lstrip('@') if " " in command_text else None
+
+    if target_username:
+        target_user_id = next((user_id for user_id, stats in chat_stats.items() if stats.get("name") == target_username), None)
+    elif update.message.reply_to_message:
+        target_user_id = str(update.message.reply_to_message.from_user.id)
+    else:
+        await update.message.reply_text("Будь ласка, вкажіть користувача для обіймів.")
+        return
+
+    if not target_user_id:
+        await update.message.reply_text("Користувача не знайдено.")
+        return
+
+    source_user_id = str(update.effective_user.id)
+    source_user_name = chat_stats.get(source_user_id, {}).get("name") or update.effective_user.first_name or update.effective_user.username
+    target_user_name = chat_stats.get(target_user_id, {}).get("name") or update.message.reply_to_message.from_user.first_name or update.message.reply_to_message.from_user.username
+
+    source_user_link = f"[{source_user_name}](tg://user?id={source_user_id})"
+    target_user_link = f"[{target_user_name}](tg://user?id={target_user_id})"
+
+    source_gender = chat_stats.get(source_user_id, {}).get("gender", None)
+    if source_gender == "чоловік":
+        response_message = f"{source_user_link} обійняв {target_user_link} 😘"
+    elif source_gender == "жінка":
+        response_message = f"{source_user_link} обійняла {target_user_link} 😘"
+    else:
+        response_message = f"{source_user_link} обійня(ла/в) {target_user_link} 😘"
+
+    if source_user_id in chat_stats and "hug_skin" in chat_stats[source_user_id]:
+        skin = chat_stats[source_user_id]["hug_skin"]
+        await update.message.reply_photo(photo=open(os.path.join(HUG_SKINS_DIR, skin), 'rb'), caption=response_message, parse_mode='Markdown')
+    else:
+        await update.message.reply_text(response_message, parse_mode='Markdown')
+
+
+
+async def kiss_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    user_id = str(update.effective_user.id)
+    logger.info(f"kiss_command called by user_id: {user_id} in chat_id: {chat_id}")
+
+    chat_stats = load_statistics(chat_id)
+    if user_id not in chat_stats:
+        await update.message.reply_text("У вас немає статистики.")
+        logger.warning(f"No statistics found for user_id: {user_id}")
+        return
+
+    command_text = update.message.text.lower()
+    target_username = command_text.split(" ", 1)[1].lstrip('@') if " " in command_text else None
+    logger.info(f"Target username: {target_username}")
+
+    if target_username:
+        target_user_id = next((user_id for user_id, stats in chat_stats.items() if stats.get("name") == target_username), None)
+    elif update.message.reply_to_message:
+        target_user_id = str(update.message.reply_to_message.from_user.id)
+    else:
+        await update.message.reply_text("Будь ласка, вкажіть користувача для поцілунку.")
+        logger.warning("No target user specified.")
+        return
+
+    if not target_user_id:
+        await update.message.reply_text("Користувача не знайдено.")
+        logger.warning(f"Target user not found: {target_username}")
+        return
+
+    source_user_name = chat_stats.get(user_id, {}).get("name") or update.effective_user.first_name or update.effective_user.username
+    target_user_name = chat_stats.get(target_user_id, {}).get("name") or update.message.reply_to_message.from_user.first_name or update.message.reply_to_message.from_user.username
+
+    source_user_link = f"[{source_user_name}](tg://user?id={user_id})"
+    target_user_link = f"[{target_user_name}](tg://user?id={target_user_id})"
+
+    source_gender = chat_stats.get(user_id, {}).get("gender", None)
+    if source_gender == "чоловік":
+        response_message = f"{source_user_link} поцілував {target_user_link} 😘"
+    elif source_gender == "жінка":
+        response_message = f"{source_user_link} поцілувала {target_user_link} 😘"
+    else:
+        response_message = f"{source_user_link} поцілува(ла/в) {target_user_link} 😘"
+
+    logger.info(f"Response message: {response_message}")
+
+    if user_id in chat_stats and "kiss_skin_skin" in chat_stats[user_id]:
+        kiss_skin = chat_stats[user_id]["kiss_skin_skin"]
+        kiss_skin_path = os.path.join(KISS_SKINS_DIR, kiss_skin)
+        logger.info(f"Kiss skin path: {kiss_skin_path}")
+
+        if os.path.exists(kiss_skin_path):
+            logger.info(f"Sending photo from path: {kiss_skin_path}")
+            await update.message.reply_photo(photo=open(kiss_skin_path, 'rb'), caption=response_message, parse_mode='Markdown')
+        else:
+            logger.warning(f"Kiss skin path does not exist: {kiss_skin_path}")
+            await update.message.reply_text(response_message, parse_mode='Markdown')
+    else:
+        logger.info("No kiss skin found, sending text response.")
+        await update.message.reply_text(response_message, parse_mode='Markdown')
+async def set_gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    user_id = str(update.effective_user.id)
+    chat_stats = load_statistics(chat_id)
+
+    if user_id not in chat_stats:
+        await update.message.reply_text("У вас немає статистики.")
+        return
+
+    if len(context.args) != 1:
+        await update.message.reply_text("Будь ласка, використовуйте формат: /set_gender <чоловік/жінка>")
+        return
+
+    gender = context.args[0].lower()
+    if gender not in ["чоловік", "жінка"]:
+        await update.message.reply_text("Невірний вибір статі. Доступні варіанти: чоловік, жінка.")
+        return
+
+    user_stats = chat_stats[user_id]
+    if 'gender' in user_stats:
+        balance = user_stats.get('currency', 0)
+        if balance < 100:
+            await update.message.reply_text("Недостатньо сяйва для зміни статі.")
+            return
+        user_stats['currency'] -= 100
+    user_stats['gender'] = gender
+    save_statistics(chat_id, chat_stats)
+
+    await update.message.reply_text(f"Ваша стать була встановлена на {gender}.")
+
+
+def command_filter(command):
+    class CustomFilter(filters.MessageFilter):
+        def filter(self, message):
+            return message.text and message.text.lower().startswith(command)
+
+    return CustomFilter()
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (
         "Доступні команди:\n"
-        "+h-h - у ВІДПОВІДЬ на графік. Додати себе до графіка на години від x до y, наприклад: +9-12 або -9-12\n"
+        "+година-година - у ВІДПОВІДЬ на графік. Додати себе до графіка на години від x до y, наприклад: +9-12 або -9-12\n"
+        "+година - у ВІДПОВІДЬ на графік. Додати себе до графіка на вказану годину, наприклад: +9 або -9\n"
+        "+година! - у ВІДПОВІДЬ на графік (зі ЗНАКОМ ОКЛИКУ в кінці. Додати годину до графіку та себе себе до графіка "
+        "на вказані години, наприклад: +9! або -9! або +9-12!\n"
         "/today - Показати сьогоднішній графік\n"
         "/tomorrow - Показати завтрашній графік\n"
         "/default - Показати стандартний графік\n"
+        "/weekday - Показати стандартний графік на будній день\n"
+        "/weekend - Показати стандартний графік на вихідний день\n"
+        "\n"
         "/stat - Показати статистику чату\n"
         "/my_stat - Показати вашу статистику\n"
         "/earn - Заробити сяйво✨ за вчорашню роботу\n"
         "/set_name - Встановити ваше ім'я\n"
         "/top_earners - Показати топ користувачів за кількістю сяйва✨\n"
         "/top_workers - Показати топ користувачів за кількістю годин\n"
-        "/top_workers_day - Показати топ користувачів за кількістю годин за вчорашній день\n"
+        "/top_yesterday - Показати топ користувачів за кількістю годин за вчорашній день\n"
         "/shop - Показати магазин скинів\n"
-        "/buy_skin - Придбати скин\n"
-        "/help - Показати це повідомлення\n"
+        "/buy_skin назва_скину - Придбати скин\n"
+        "/preview_skin назва_скину- Переглянути скин\n"
         "\n"
         "Для адмінів\n"
         "/reset_stat - Скинути статистику користувача\n"
@@ -1144,6 +1463,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, signal_handler)  # Handle signal
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("today", show_today_schedule))
     app.add_handler(CommandHandler("tomorrow", show_tomorrow_schedule))
@@ -1151,9 +1471,12 @@ def main() -> None:
     app.add_handler(CommandHandler("weekday", show_weekday_default_schedule))
     app.add_handler(CommandHandler("weekend", show_weekend_default_schedule))
     app.add_handler(CommandHandler("update", mechanical_update_schedules_admin))
+
     app.add_handler(CommandHandler("leavethisgroup", leave_username))
     app.add_handler(CommandHandler("leave", leave))
     app.add_handler(CommandHandler("stat", all_stat))
+    app.add_handler(CommandHandler("hug", hug_command))
+    app.add_handler(CommandHandler("kiss", kiss_command))
     app.add_handler(CommandHandler("my_stat", my_stat))
     app.add_handler(CommandHandler("your_stat", your_stat))
     app.add_handler(CommandHandler("earn", earn))
@@ -1162,24 +1485,40 @@ def main() -> None:
     app.add_handler(CommandHandler("set_money", set_money_admin))
     app.add_handler(CommandHandler("top_earners", top_earners))
     app.add_handler(CommandHandler("top_workers", top_workers))
-    app.add_handler(CommandHandler("top_workers_day", top_workers_day))
+    app.add_handler(CommandHandler("top", top_workers))
+    app.add_handler(CommandHandler("top_yesterday", top_yesterday))
+    app.add_handler(CommandHandler("top_workers_weekly", top_workers_weekly))
     app.add_handler(CommandHandler("shop", shop_command))
     app.add_handler(CommandHandler("buy_skin", buy_skin_command))
     app.add_handler(CommandHandler("preview_skin", preview_skin_command))
     app.add_handler(CommandHandler("set_skin", set_skin_admin))
     app.add_handler(CommandHandler("reset_stat", reset_stat_admin))
-    app.add_handler(MessageHandler(filters.Regex(r'^(так|ні)$') & ~filters.COMMAND, confirm_reset_stat_text))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^[+-]'), edit_schedule))
+    app.add_handler(CommandHandler("change_skin", change_skin_command))
+    app.add_handler(CommandHandler("set_gender", set_gender))
+
+    app.add_handler(MessageHandler(command_filter("стата"), all_stat))
+    app.add_handler(MessageHandler(command_filter("обійняти"), hug_command))
+    app.add_handler(MessageHandler(command_filter("цьом"), kiss_command))
+    app.add_handler(MessageHandler(command_filter("моя стата"), my_stat))
+    app.add_handler(MessageHandler(command_filter("твоя стата"), your_stat))
+    app.add_handler(MessageHandler(command_filter("зп"), earn))
+    app.add_handler(MessageHandler(command_filter("топ сяйва"), top_earners))
+    app.add_handler(MessageHandler(command_filter("топ годин"), top_workers))
+    app.add_handler(MessageHandler(command_filter("топ тиждень"), top_workers_weekly))
+    app.add_handler(MessageHandler(command_filter("топ вчора"), top_yesterday))
+
+    app.add_handler(MessageHandler(command_filter("магазин") | command_filter("шоп"), shop_command))
     app.add_handler(CallbackQueryHandler(shop_command, pattern=r'^shop\s\d+'))
+
+    app.add_handler(MessageHandler(filters.Regex(r'^(так|ні)$') & ~filters.COMMAND, confirm_reset_stat_text))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^[+-]'), edit_schedule))
+
     # Create scheduler
     scheduler = BackgroundScheduler()
     scheduler.add_job(update_schedules, 'cron', hour=0, minute=0, timezone=kyiv_tz)
     scheduler.start()
-
     # Run keep_alive in a separate thread
     threading.Thread(target=keep_alive, daemon=True).start()
-
     app.run_polling(poll_interval=1)
 
 
