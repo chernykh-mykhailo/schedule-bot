@@ -1223,15 +1223,30 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     for time_slot, users in sorted_schedule:
         user_names = []
         for user_id in users:
-            user_name = get_user_name(chat_stats.get(str(user_id), {}), await context.bot.get_chat(user_id))
-            user_names.append(user_name)
-        updated_schedule_message += f"{time_slot}: {' – '.join(user_names) if user_names else '–'}\n"
+            user_id = str(user_id)
+            chat_stats = load_statistics(update.effective_chat.id)
+            if user_id in chat_stats and chat_stats[user_id].get("name"):
+                user_names.append(chat_stats[user_id]["name"])
+            else:
+                try:
+                    chat = await context.bot.get_chat(user_id)
+                    if chat.first_name:
+                        user_names.append(format_name(chat.first_name))
+                    else:
+                        user_names.append("–")
+                except BadRequest:
+                    user_names.append("unknown")
+
+        user_names_str = ' – '.join(user_names) if user_names else "–"
+        updated_schedule_message += f"{time_slot}: {user_names_str}\n"
 
     try:
         await update.message.reply_to_message.edit_text(updated_schedule_message + '\n' + response_message)
     except Exception as e:
         await update.message.reply_text("Не вдалося редагувати повідомлення. Спробуйте ще раз.")
         print(e)
+
+
 
 async def leave(update: Update, context):
     response = random.choice(responses_easy)
