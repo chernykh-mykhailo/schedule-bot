@@ -175,3 +175,5 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 /working_bot/stats/
+/working_bot/skins/
+/working_bot/chat_config.json

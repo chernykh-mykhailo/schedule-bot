@@ -853,7 +853,6 @@ async def top_yesterday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         total_day_hours = stats.get('yesterday', 0)
         try:
             chat = await context.bot.get_chat(user_id)
-            user_name = get_user_name(stats, chat)
             top_users.append((user_id, total_day_hours))
         except BadRequest as e:
             logging.error(f"Failed to get chat for user_id {user_id}: {e}")
@@ -1111,7 +1110,7 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     user_id = update.effective_user.id
     chat_stats = load_statistics(chat_id)
-    user_name = chat_stats.get(user_id, {}).get("name", update.effective_user.first_name or update.effective_user.username)
+    user_name = get_user_name(chat_stats.get(str(user_id), {}), update.effective_user)
 
     if not update.message.reply_to_message:
         return
@@ -1222,7 +1221,8 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     sorted_schedule = sorted(schedule.items(), key=lambda x: (x[0] == '00:00 - 01:00', x[0]))
     updated_schedule_message = f"Графік роботи Адміністраторів на {date_label}\n\n"
     for time_slot, users in sorted_schedule:
-        user_names = [chat_stats.get(str(user_id), {}).get("name", "unknown") for user_id in users]
+        user_names = [get_user_name(chat_stats.get(str(user_id), {}),
+                                    await context.bot.get_chat(user_id)) for user_id in users]
         updated_schedule_message += f"{time_slot}: {' – '.join(user_names) if user_names else '–'}\n"
 
     try:
