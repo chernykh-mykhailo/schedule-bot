@@ -1221,8 +1221,10 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     sorted_schedule = sorted(schedule.items(), key=lambda x: (x[0] == '00:00 - 01:00', x[0]))
     updated_schedule_message = f"Графік роботи Адміністраторів на {date_label}\n\n"
     for time_slot, users in sorted_schedule:
-        user_names = [get_user_name(chat_stats.get(str(user_id), {}),
-                                    await context.bot.get_chat(user_id)) for user_id in users]
+        user_names = []
+        for user_id in users:
+            user_name = get_user_name(chat_stats.get(str(user_id), {}), await context.bot.get_chat(user_id))
+            user_names.append(user_name)
         updated_schedule_message += f"{time_slot}: {' – '.join(user_names) if user_names else '–'}\n"
 
     try:
