@@ -3,6 +3,9 @@
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$">
       <excludeFolder url="file://$MODULE_DIR$/schedules" />
+      <excludeFolder url="file://$MODULE_DIR$/working_bot/schedules" />
+      <excludeFolder url="file://$MODULE_DIR$/working_bot/skins" />
+      <excludeFolder url="file://$MODULE_DIR$/working_bot/stats" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />

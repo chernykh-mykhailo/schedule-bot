@@ -8,6 +8,7 @@ default_schedule.json
 weekday_default_schedule.json
 weekend_default_schedule.json
 working_bot/schedules
+/refactor_aiogram_bot/schedules/
 
 bot.lock
 refactor_aiogram_bot/COPILOT.md
@@ -177,3 +178,4 @@ cython_debug/
 /working_bot/stats/
 /working_bot/skins/
 /working_bot/chat_config.json
+/refactor_aiogram_bot/schedules/
