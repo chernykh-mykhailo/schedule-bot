@@ -7,7 +7,16 @@ tomorrow_schedule.json
 default_schedule.json
 weekday_default_schedule.json
 weekend_default_schedule.json
-beta_bot/schedules
+working_bot/schedules
+/refactor_aiogram_bot/schedules/
+
+/working_bot/stats/
+/working_bot/skins/
+/working_bot/chat_config.json
+/refactor_aiogram_bot/stats/
+
+bot.lock
+refactor_aiogram_bot/COPILOT.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
