@@ -179,3 +179,5 @@ cython_debug/
 /working_bot/skins/
 /working_bot/chat_config.json
 /refactor_aiogram_bot/schedules/
+/refactor_aiogram_bot/schedules/
+/refactor_aiogram_bot/stats/
