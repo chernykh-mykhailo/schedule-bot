@@ -10,6 +10,11 @@ weekend_default_schedule.json
 working_bot/schedules
 /refactor_aiogram_bot/schedules/
 
+/working_bot/stats/
+/working_bot/skins/
+/working_bot/chat_config.json
+/refactor_aiogram_bot/stats/
+
 bot.lock
 refactor_aiogram_bot/COPILOT.md
 
@@ -175,9 +180,3 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
-/working_bot/stats/
-/working_bot/skins/
-/working_bot/chat_config.json
-/refactor_aiogram_bot/schedules/
-/refactor_aiogram_bot/schedules/
-/refactor_aiogram_bot/stats/
