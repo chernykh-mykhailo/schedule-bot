@@ -1391,6 +1391,26 @@ async def set_gender(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(f"Ваша стать була встановлена на {gender}.")
 
 
+async def pin_message_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+
+    # Check if the user is an admin
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("You do not have permission to use this command.")
+        return
+
+    # Check if the message is a reply to another message
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Please use this command in reply to the message you want to pin.")
+        return
+
+    try:
+        await context.bot.pin_chat_message(chat_id=update.effective_chat.id, message_id=update.message.reply_to_message.message_id)
+        await update.message.reply_text("Message pinned successfully.")
+    except Exception as e:
+        await update.message.reply_text(f"Failed to pin message: {e}")
+
+
 def command_filter(command):
     class CustomFilter(filters.MessageFilter):
         def filter(self, message):
@@ -1469,6 +1489,8 @@ def main() -> None:
     app.add_handler(CommandHandler("reset_stat", reset_stat_admin))
     app.add_handler(CommandHandler("change_skin", change_skin_command))
     app.add_handler(CommandHandler("set_gender", set_gender))
+
+    app.add_handler(CommandHandler("pin", pin_message_admin))
 
     app.add_handler(MessageHandler(command_filter("стата"), all_stat))
     app.add_handler(MessageHandler(command_filter("обійняти"), hug_command))
