@@ -13,6 +13,7 @@ import signal
 from datetime import datetime, timedelta
 
 import pytz
+import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, \
     CallbackQueryHandler, CallbackContext
@@ -26,6 +27,8 @@ sys.path.append('/etc/secrets')
 
 from config import TELEGRAM_TOKEN  # Імпорт токену з конфігураційного файлу
 from config import ADMIN_IDS  # Імпорт списку з айдішками адмінів
+from config import MISTRAL_API_KEY
+from config import MISTRAL_API_URL
 
 LOCK_FILE = 'bot.lock'
 
@@ -48,6 +51,49 @@ STATS_DIR = "stats"
 # Create directory for statistics if not exists
 if not os.path.exists(STATS_DIR):
     os.makedirs(STATS_DIR)
+
+
+chat_states = {}
+
+async def start_chatbot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    chat_states[chat_id] = True
+    await update.message.reply_text("Чат-бот активовано.")
+
+async def stop_chatbot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    chat_states[chat_id] = False
+    await update.message.reply_text("Чат-бот деактивовано.")
+
+async def get_mistral_response(message: str) -> str:
+    headers = {
+        "Authorization": f"Bearer {MISTRAL_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "open-mistral-nemo",
+        "messages": [{"role": "user", "content": message}]
+    }
+    try:
+        response = requests.post(MISTRAL_API_URL, headers=headers, json=data)
+        response.raise_for_status()
+        response_data = response.json()
+        return response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error occurred during Mistral API request: {e}")
+        return ""
+
+
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    if update.message.reply_to_message and chat_states.get(chat_id, False):
+        response = await get_mistral_response(update.message.text)
+        logging.info(f"Mistral response: {response}")
+        if response:
+            await update.message.reply_text(response)
+        else:
+            logging.warning("Empty response from Mistral.ai API")
+
 
 
 def create_lock():
@@ -1064,20 +1110,20 @@ async def mechanical_update_schedules_admin(update: Update, context: ContextType
 async def show_today_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     today_schedule = load_schedule(chat_id, "today", empty_weekday, empty_weekend)
-    text = await get_schedule_text(today_schedule, datetime.now(pytz.timezone('Europe/Kiev')).strftime("%d.%m.%Y"), context, update)
+    text = await get_schedule_text(today_schedule, datetime.now(kyiv_tz).strftime("%d.%m.%Y"), context, update)
     await update.message.reply_text(text)
 
 
 async def show_tomorrow_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     tomorrow_schedule = load_schedule(chat_id, "tomorrow", empty_weekday, empty_weekend)
-    text = await get_schedule_text(tomorrow_schedule, (datetime.now(pytz.timezone('Europe/Kiev')) + timedelta(days=1)).strftime("%d.%m.%Y"), context, update)
+    text = await get_schedule_text(tomorrow_schedule, (datetime.now(kyiv_tz) + timedelta(days=1)).strftime("%d.%m.%Y"), context, update)
     await update.message.reply_text(text)
 
 
 async def show_default_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
-    current_day = datetime.now(pytz.timezone('Europe/Kiev')).weekday()
+    current_day = datetime.now(kyiv_tz).weekday()
     if current_day < 5:
         schedule = load_schedule(chat_id, "weekday_default", empty_weekday, empty_weekend)
         text = await get_schedule_text(schedule, "стандартний графік (будній день)", context, update)
@@ -1124,8 +1170,8 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         schedule_type = "weekend_default"
     elif "Графік роботи Адміністраторів на " in reply_text:
         schedule_date = reply_text.split('на ')[1].strip().split()[0]
-        current_date = datetime.now(pytz.timezone('Europe/Kiev')).strftime("%d.%m.%Y")
-        tomorrow_date = (datetime.now(pytz.timezone('Europe/Kiev')) + timedelta(days=1)).strftime("%d.%m.%Y")
+        current_date = datetime.now(kyiv_tz).strftime("%d.%m.%Y")
+        tomorrow_date = (datetime.now(kyiv_tz) + timedelta(days=1)).strftime("%d.%m.%Y")
         if schedule_date == current_date:
             schedule_type = "today"
         elif schedule_date == tomorrow_date:
@@ -1212,8 +1258,8 @@ async def edit_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             f"Будь ласка, введіть правильний час(від 0 до 24). "
         )
     date_label = {
-        "today": datetime.now(pytz.timezone('Europe/Kiev')).strftime("%d.%m.%Y"),
-        "tomorrow": (datetime.now(pytz.timezone('Europe/Kiev')) + timedelta(days=1)).strftime("%d.%m.%Y"),
+        "today": datetime.now(kyiv_tz).strftime("%d.%m.%Y"),
+        "tomorrow": (datetime.now(kyiv_tz) + timedelta(days=1)).strftime("%d.%m.%Y"),
         "weekday_default": "стандартний графік (будній день)",
         "weekend_default": "стандартний графік (вихідний день)"
     }.get(schedule_type, "незнайомий графік")
@@ -1453,10 +1499,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(text)
 
 
-def main() -> None:
-    signal.signal(signal.SIGINT, signal_handler)  # Handle signal
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
+def add_handlers(app):
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("today", show_today_schedule))
@@ -1508,6 +1551,17 @@ def main() -> None:
 
     app.add_handler(MessageHandler(filters.Regex(r'^(так|ні)$') & ~filters.COMMAND, confirm_reset_stat_text))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^[+-]'), edit_schedule))
+
+    app.add_handler(CommandHandler("start_gpt", start_chatbot))
+    app.add_handler(CommandHandler("stop_gpt", stop_chatbot))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+
+
+def main() -> None:
+    signal.signal(signal.SIGINT, signal_handler)  # Handle signal
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+    add_handlers(app)
 
     # Create scheduler
     scheduler = BackgroundScheduler()
