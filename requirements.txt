@@ -1,4 +1,7 @@
-apscheduler
+apscheduler~=3.10.4
 python-telegram-bot
-pytz
-emoji
+pytz~=2024.2
+emoji~=2.14.0
+
+requests~=2.32.3
+aiogram~=3.13.1

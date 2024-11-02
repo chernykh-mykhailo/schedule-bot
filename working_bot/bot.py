@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 
 import pytz
 import requests
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, \
     CallbackQueryHandler, CallbackContext
 from telegram.error import BadRequest, NetworkError
@@ -941,7 +941,6 @@ async def top_yesterday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             logging.error(f"Failed to get chat for user_id {user_id}: {e}")
 
     await update.message.reply_text(text)
-
 
 
 async def all_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
