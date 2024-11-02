@@ -269,10 +269,62 @@ def load_statistics(chat_id):
         return {}
 
 
+def load_statistics_for_period(chat_id, start_date, end_date):
+    stats = {}
+    current_date = start_date
+    while current_date <= end_date:
+        file_name = os.path.join(STATS_DIR, f"{chat_id}_{current_date.strftime('%Y-%m-%d')}.json")
+        if os.path.exists(file_name):
+            try:
+                with open(file_name, 'r', encoding='utf-8') as f:
+                    daily_stats = json.load(f)
+                    for user_id, user_stats in daily_stats.items():
+                        if user_id not in stats:
+                            stats[user_id] = user_stats
+                        else:
+                            stats[user_id]['total'] += user_stats.get('total', 0)
+                            stats[user_id]['currency'] += user_stats.get('currency', 0)
+                            for day, hours in user_stats.get('daily', {}).items():
+                                if day not in stats[user_id]['daily']:
+                                    stats[user_id]['daily'][day] = hours
+                                else:
+                                    stats[user_id]['daily'][day] += hours
+            except Exception as e:
+                logging.error(f"Error loading statistics from {file_name}: {e}")
+        current_date += timedelta(days=1)
+    return stats
+
+
+def load_user_stats(chat_id, user_id):
+    file_name = os.path.join(STATS_DIR, f"{chat_id}.json")
+    if os.path.exists(file_name):
+        with open(file_name, 'r', encoding='utf-8') as f:
+            stats = json.load(f)
+            return stats.get(str(user_id), {})
+    return {}
+
+def save_user_stats(chat_id, user_id, user_stats):
+    file_name = os.path.join(STATS_DIR, f"{chat_id}.json")
+    if os.path.exists(file_name):
+        with open(file_name, 'r', encoding='utf-8') as f:
+            stats = json.load(f)
+    else:
+        stats = {}
+    stats[str(user_id)] = user_stats
+    with open(file_name, 'w', encoding='utf-8') as f:
+        json.dump(stats, f, ensure_ascii=False, indent=4)
+
+
+def has_earned_today(user_stats):
+    last_earn_date = datetime.strptime(user_stats.get('last_earn', '1970-01-01 00:00:00'), "%Y-%m-%d %H:%M:%S")
+    return last_earn_date.date() == datetime.now(kyiv_tz).date()
+
+
 async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user_id = str(update.effective_user.id)
     chat_stats = load_statistics(chat_id)
+    user_stats = load_user_stats(chat_id, user_id)
 
     if user_id == 1087968824:
         await update.message.reply_text("Анонімні адміністратори не можуть використовувати цю команду.")
@@ -281,19 +333,18 @@ async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if user_id not in chat_stats:
         chat_stats[user_id] = {"total": 0, "daily": {}, "currency": 0, "name": "", "last_earn": None}
 
+    if has_earned_today(user_stats):
+        now = datetime.now(kyiv_tz)
+        next_earn_time = datetime.combine(now.date() + timedelta(days=1), datetime.min.time(), kyiv_tz)
+        remaining_time = next_earn_time - now
+        hours, remainder = divmod(remaining_time.seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+        await update.message.reply_text(
+            f"Ви вже заробили сяйво✨ сьогодні. Спробуйте знову через {hours} годин і {minutes} хвилин.")
+        return
+
     last_earn = chat_stats[user_id].get("last_earn")
     now = datetime.now(kyiv_tz)
-
-    if last_earn:
-        last_earn_date = datetime.strptime(last_earn, "%Y-%m-%d %H:%M:%S").astimezone(kyiv_tz).date()
-        if last_earn_date == now.date():
-            next_earn_time = datetime.combine(now.date() + timedelta(days=1), datetime.min.time(), kyiv_tz)
-            remaining_time = next_earn_time - now
-            hours, remainder = divmod(remaining_time.seconds, 3600)
-            minutes, _ = divmod(remainder, 60)
-            await update.message.reply_text(f"Ви вже заробили сяйво✨ сьогодні. Спробуйте знову через {hours} годин і {minutes} хвилин.")
-            return
-
 
     # Calculate the total hours worked yesterday
     hours_worked_yesterday = chat_stats[user_id].get("yesterday", 0)
@@ -305,7 +356,8 @@ async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_stats[user_id]["last_earn"] = now.strftime("%Y-%m-%d %H:%M:%S")
 
     save_statistics(chat_id, chat_stats)
-    await update.message.reply_text(f"Ви заробили {earned_currency} сяйва✨ за {hours_worked_yesterday} годин роботи вчора. Загальний баланс: {chat_stats[user_id]['currency']} сяйва✨.")
+    await update.message.reply_text(f"Ви заробили {earned_currency} сяйва✨ з"
+                                    f"а {hours_worked_yesterday} годин роботи вчора. Загальний баланс: {chat_stats[user_id]['currency']} сяйва✨.")
 
 
 async def add_money_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -675,8 +727,10 @@ async def change_skin_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(f"Ви успішно змінили активний скін на {skin} з категорії {category}.")
 
 
-def save_statistics(chat_id, stats):
-    file_name = get_stats_file_name(chat_id)
+def save_statistics(chat_id, stats, date=None):
+    if date is None:
+        date = datetime.now(kyiv_tz).strftime("%Y-%m-%d")
+    file_name = os.path.join(STATS_DIR, f"{chat_id}_{date}.json")
     try:
         with open(file_name, 'w', encoding='utf-8') as f:
             json.dump(stats, f, ensure_ascii=False, indent=4)
@@ -692,6 +746,8 @@ async def get_user_stats_text(user_stats, user_name):
     text = f"Статистика користувача {user_name}:\n"
     if user_stats.get("total", 0) > 0:
         text += f"Загалом: {user_stats['total']} годин\n"
+    if user_stats.get("yesterday", 0) > 0:
+        text += f"Вчора: {user_stats['yesterday']} годин\n"
     if user_stats.get("currency", 0) > 0:
         text += f"Баланс: {user_stats['currency']} сяйва✨\n"
     if user_stats.get("gender", "не встановлено") != "не встановлено":
@@ -914,6 +970,62 @@ async def top_yesterday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     await update.message.reply_text(text)
 
+
+async def top_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    end_date = datetime.now(kyiv_tz)
+    start_date = end_date - timedelta(days=7)
+    weekly_stats = load_statistics_for_period(chat_id, start_date, end_date)
+    await display_top_users(update, weekly_stats, "за цей тиждень")
+
+
+async def top_last_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    end_date = datetime.now(kyiv_tz) - timedelta(days=7)
+    start_date = end_date - timedelta(days=7)
+    last_week_stats = load_statistics_for_period(chat_id, start_date, end_date)
+    await display_top_users(update, last_week_stats, "за минулий тиждень")
+
+
+async def top_month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    end_date = datetime.now(kyiv_tz)
+    start_date = end_date - timedelta(days=30)
+    monthly_stats = load_statistics_for_period(chat_id, start_date, end_date)
+    await display_top_users(update, monthly_stats, "за цей місяць")
+
+
+async def top_last_month(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    end_date = datetime.now(kyiv_tz) - timedelta(days=30)
+    start_date = end_date - timedelta(days=30)
+    last_month_stats = load_statistics_for_period(chat_id, start_date, end_date)
+    await display_top_users(update, last_month_stats, "за минулий місяць")
+
+
+async def top_custom_period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    if len(context.args) != 2:
+        await update.message.reply_text("Будь ласка, введіть дві дати у форматі YYYY-MM-DD.")
+        return
+    try:
+        start_date = datetime.strptime(context.args[0], "%Y-%m-%d")
+        end_date = datetime.strptime(context.args[1], "%Y-%m-%d")
+    except ValueError:
+        await update.message.reply_text("Неправильний формат дати. Використовуйте YYYY-MM-DD.")
+        return
+    custom_period_stats = load_statistics_for_period(chat_id, start_date, end_date)
+    await display_top_users(update, custom_period_stats, f"з {start_date.strftime('%Y-%m-%d')} по {end_date.strftime('%Y-%m-%d')}")
+
+
+async def display_top_users(update: Update, stats, period_label):
+    top_users = sorted(stats.items(), key=lambda x: x[1].get('total', 0), reverse=True)[:10]
+    text = f"Топ користувачів {period_label}:\n"
+    for user_id, user_stats in top_users:
+        user_name = get_user_name(user_stats, update.effective_user)
+        total_hours = user_stats.get("total", 0)
+        text += f"{user_name}: {total_hours} годин\n"
+    await update.message.reply_text(text)
 
 
 async def all_stat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1520,11 +1632,18 @@ def add_handlers(app):
     app.add_handler(CommandHandler("set_name", set_name))
     app.add_handler(CommandHandler("add_money", add_money_admin))
     app.add_handler(CommandHandler("set_money", set_money_admin))
+
     app.add_handler(CommandHandler("top_earners", top_earners))
     app.add_handler(CommandHandler("top_workers", top_workers))
     app.add_handler(CommandHandler("top", top_workers))
     app.add_handler(CommandHandler("top_yesterday", top_yesterday))
     app.add_handler(CommandHandler("top_workers_weekly", top_workers_weekly))
+    app.add_handler(CommandHandler("top_week", top_week))
+    app.add_handler(CommandHandler("top_last_week", top_last_week))
+    app.add_handler(CommandHandler("top_month", top_month))
+    app.add_handler(CommandHandler("top_last_month", top_last_month))
+    app.add_handler(CommandHandler("top_custom_period", top_custom_period))
+
     app.add_handler(CommandHandler("shop", shop_command))
     app.add_handler(CommandHandler("buy_skin", buy_skin_command))
     app.add_handler(CommandHandler("preview_skin", preview_skin_command))
